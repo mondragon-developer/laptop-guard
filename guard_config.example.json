@@ -1,0 +1,10 @@
+{
+  "phone": "555-0100",
+  "key_combo": [
+    "ctrl",
+    "shift",
+    "z"
+  ],
+  "alarm_duration_sec": 90,
+  "record_seconds": 5
+}

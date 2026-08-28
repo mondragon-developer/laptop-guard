@@ -1,0 +1,12 @@
+# Personal settings - contains YOUR phone number and secret combo.
+# Never commit this file; guard_config.example.json is the template.
+guard_config.json
+
+# Runtime artifacts - intrusion log and webcam clips of people.
+guard.log
+intruder.mp4
+intruder.avi
+
+# Python
+__pycache__/
+*.pyc

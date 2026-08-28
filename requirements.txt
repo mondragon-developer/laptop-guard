@@ -1,0 +1,11 @@
+# laptop-guard dependencies (Windows + macOS)
+#
+# tkinter is NOT listed here: it ships with Python itself.
+#   - Windows: included in the python.org installer (default option).
+#   - macOS:   included in python.org builds; for Homebrew Python
+#              install it with:  brew install python-tk
+
+pynput>=1.7.6          # global keyboard/mouse listening + suppression
+pygame>=2.5            # loud alarm playback (PygameAlarm)
+numpy>=1.24            # alarm tone generation for pygame
+opencv-python>=4.8     # webcam clip on trigger (WebcamRecorder)
