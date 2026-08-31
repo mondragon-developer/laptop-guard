@@ -43,10 +43,6 @@ def capture_loop() -> None:
 
 
 def main() -> None:
-    capturer = threading.Thread(target=capture_loop, daemon=True)
-    capturer.start()
-    time.sleep(0.6)  # let the capture warm up before the window appears
-
     root = tk.Tk()
     root.title("System Alert")
     root.attributes("-fullscreen", True)
@@ -58,6 +54,14 @@ def main() -> None:
         font=("Arial", 22, "bold"), wraplength=900, justify="center",
     )
     label.pack(expand=True)
+
+    # Show the black window FIRST, then start capturing: frames taken
+    # before the window is on top would leak the desktop into the gif.
+    root.update_idletasks()
+    root.update()
+    capturer = threading.Thread(target=capture_loop, daemon=True)
+    capturer.start()
+    time.sleep(0.5)  # brief black beat before typing starts
 
     state = {"shown": 0, "hold": 0}
 
@@ -71,22 +75,45 @@ def main() -> None:
             root.after(int(1000 / FPS), tick)
         else:
             done_typing.set()
+            stop_capture.set()      # stop BEFORE the window closes,
+            capturer.join(timeout=2)  # so no desktop frame sneaks in
             root.destroy()
 
-    root.after(300, tick)  # brief black beat before typing starts
+    root.after(0, tick)
     root.mainloop()
 
     stop_capture.set()
     capturer.join(timeout=2)
 
-    # trim leading frames captured before the window was on top
-    frames[:] = frames[2:]
+    # Safety net: keep only the contiguous run of dark frames (the black
+    # warning screen), dropping anything bright at either end.
+    def is_dark(img) -> bool:
+        gray = img.convert("L").resize((64, 40))
+        return sum(gray.getdata()) / (64 * 40) < 50
+
+    dark = [i for i, f in enumerate(frames) if is_dark(f)]
+    if not dark:
+        sys.exit("no dark frames captured - the window never showed?")
+    frames[:] = frames[dark[0]: dark[-1] + 1]
 
     first = frames[0]
     ratio = OUT_WIDTH / first.width
     size = (OUT_WIDTH, int(first.height * ratio))
+
+    def clean(img):
+        """Keep only the black background and the red text; force every
+        other pixel to black, so topmost desktop overlays (popups,
+        widgets) can never leak into the gif."""
+        import numpy as np
+        arr = np.array(img.convert("RGB"), dtype=np.uint8)
+        r, g, b = arr[..., 0].astype(int), arr[..., 1], arr[..., 2]
+        red_text = (r > 50) & (r > g.astype(int) * 1.8) & (r > b.astype(int) * 1.8)
+        keep = red_text | ((r < 40) & (g < 40) & (b < 40))
+        arr[~keep] = 0
+        return Image.fromarray(arr)
+
     resized = [
-        f.resize(size).convert("P", palette=Image.ADAPTIVE, colors=64)
+        clean(f.resize(size)).convert("P", palette=Image.ADAPTIVE, colors=64)
         for f in frames
     ]
     resized[0].save(
