@@ -1,0 +1,72 @@
+# Release workflow: pushing a tag like v1.0.0 builds the Windows .exe
+# and the macOS .app with PyInstaller and attaches both zips to a new
+# GitHub Release.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+      - name: Build executable
+        run: pyinstaller laptop_guard.spec --clean --noconfirm
+      - name: Package zip
+        shell: pwsh
+        run: |
+          Copy-Item release/READ-ME-FIRST-windows.txt dist/READ-ME-FIRST.txt
+          Compress-Archive -Path dist/LaptopGuard.exe, dist/READ-ME-FIRST.txt -DestinationPath laptop-guard-windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: laptop-guard-windows
+          path: laptop-guard-windows.zip
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+      - name: Build app bundle
+        run: pyinstaller laptop_guard.spec --clean --noconfirm
+      - name: Package zip
+        run: |
+          cp release/READ-ME-FIRST-macos.txt dist/READ-ME-FIRST.txt
+          cd dist && zip -ry ../laptop-guard-macos.zip LaptopGuard.app READ-ME-FIRST.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: laptop-guard-macos
+          path: laptop-guard-macos.zip
+
+  release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --title "laptop-guard $TAG" \
+            --notes "Download the zip for your OS, unzip, and follow READ-ME-FIRST.txt inside. No Python installation needed. Windows: click 'More info -> Run anyway' on the SmartScreen warning. macOS: right-click the app -> Open the first time, then grant Accessibility and Camera when asked." \
+            artifacts/laptop-guard-windows/laptop-guard-windows.zip \
+            artifacts/laptop-guard-macos/laptop-guard-macos.zip

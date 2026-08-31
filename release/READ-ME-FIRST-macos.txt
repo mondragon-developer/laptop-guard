@@ -1,0 +1,29 @@
+LAPTOP GUARD - macOS
+=====================
+
+1. Unzip this folder anywhere you like and keep the files together.
+
+2. The app is not signed with an Apple Developer certificate, so the
+   FIRST launch must be: right-click LaptopGuard.app -> Open -> Open.
+   (A plain double-click shows "cannot be opened" the first time.)
+
+3. macOS will ask for two one-time permissions for LaptopGuard:
+   - Accessibility (System Settings -> Privacy & Security): without it
+     the guard cannot see or block the keyboard and mouse. Enable it,
+     then quit and reopen the app.
+   - Camera: needed for the intruder clip.
+
+4. First run: a small window shows the default settings (secret combo
+   Ctrl+Shift+Z, phone number on the fake warning, alarm and clip
+   lengths). Choose "Use defaults and activate" or "Customize...".
+   Every later run activates by itself after a 5-second countdown.
+
+5. Walk away. Any key press, click, or mouse movement triggers a
+   full-screen warning, a loud alarm, and a short webcam clip of the
+   intruder, and every attempt is written to guard.log.
+
+6. Press your secret combo (default Ctrl+Shift+Z) to stop everything.
+   If anything ever goes wrong, Cmd+Opt+Esc and force-quit the app.
+
+Files created next to the app: guard_config.json (your settings),
+guard.log (intrusion attempts), intruder.mp4 (webcam clip).

@@ -28,7 +28,11 @@ import sys
 import tkinter as tk
 from tkinter import messagebox
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = (
+    os.path.dirname(os.path.abspath(sys.executable))
+    if getattr(sys, "frozen", False)          # PyInstaller build
+    else os.path.dirname(os.path.abspath(__file__))
+)
 os.chdir(HERE)
 
 _COUNTDOWN_SEC = 5
@@ -80,7 +84,13 @@ def _silence_stdio() -> None:
 
 
 def _ensure_deps(status: tk.Label) -> bool:
-    """Install anything missing from requirements.txt via pip."""
+    """Install anything missing from requirements.txt via pip.
+
+    In a frozen (PyInstaller) build every dependency is already bundled
+    and there is no pip, so the check is skipped entirely.
+    """
+    if getattr(sys, "frozen", False):
+        return True
     os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
     modules = {"pynput": "pynput", "numpy": "numpy",
                "pygame": "pygame", "cv2": "opencv-python"}

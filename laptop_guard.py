@@ -38,8 +38,19 @@ from typing import Callable, Optional
 # ──────────────────────────────────────────────
 # 1. CONFIGURATION  (Single Responsibility)
 # ──────────────────────────────────────────────
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                           "guard_config.json")
+def app_dir() -> str:
+    """Folder that holds the app's data files (config, log, webcam clip).
+
+    In a frozen (PyInstaller) build, __file__ points inside a temporary
+    extraction folder that is deleted on exit, so the executable's own
+    folder is used instead - settings survive across runs there.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+CONFIG_FILE = os.path.join(app_dir(), "guard_config.json")
 
 MESSAGE_TEMPLATE = (
     "⚠️  SYSTEM BREACH DETECTED  ⚠️\n\n"
@@ -628,8 +639,9 @@ class LaptopGuard:
 # 8. ENTRY POINT
 # ──────────────────────────────────────────────
 if __name__ == "__main__":
-    # Settings come from guard_config.json next to this script - edit them
-    # with the setup window (guard_setup.py / setup.bat / Setup.command).
+    # Settings come from guard_config.json next to this script (or next to
+    # the executable in a frozen build) - edit them with the setup window
+    # (guard_setup.py / setup.bat / Setup.command).
     # Built-in defaults apply when the file does not exist yet.
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    os.chdir(app_dir())
     LaptopGuard(load_config()).activate()

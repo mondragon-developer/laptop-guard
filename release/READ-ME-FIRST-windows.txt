@@ -1,0 +1,31 @@
+LAPTOP GUARD - Windows
+=======================
+
+1. Unzip this folder anywhere you like (Desktop is fine) and keep the
+   files together.
+
+2. Double-click LaptopGuard.exe.
+
+3. Windows will show a blue "Windows protected your PC" (SmartScreen)
+   warning because the app is not code-signed. Click "More info" and
+   then "Run anyway". This only appears the first time.
+
+4. First run: a small window shows the default settings (secret combo
+   Ctrl+Shift+Z, phone number on the fake warning, alarm and clip
+   lengths). Choose "Use defaults and activate" or "Customize...".
+   Every later run activates by itself after a 5-second countdown.
+
+5. Walk away. Any key press, click, or mouse movement triggers a
+   full-screen warning, a loud alarm, and a short webcam clip of the
+   intruder, and every attempt is written to guard.log.
+
+6. Press your secret combo (default Ctrl+Shift+Z) to stop everything.
+   If anything ever goes wrong, Ctrl+Alt+Del -> Sign out always works.
+
+Some antivirus tools flag any program that blocks the keyboard as
+suspicious (the guard suppresses input by design, like a keylogger
+would). The app does not send anything anywhere; it only writes files
+in this folder.
+
+Files created next to the exe: guard_config.json (your settings),
+guard.log (intrusion attempts), intruder.mp4 (webcam clip).
