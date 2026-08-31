@@ -4,8 +4,16 @@ LAPTOP GUARD - macOS
 1. Unzip this folder anywhere you like and keep the files together.
 
 2. The app is not signed with an Apple Developer certificate, so the
-   FIRST launch must be: right-click LaptopGuard.app -> Open -> Open.
-   (A plain double-click shows "cannot be opened" the first time.)
+   FIRST launch needs one extra step:
+   a. Double-click (or right-click -> Open) LaptopGuard.app. macOS shows
+      a warning like "LaptopGuard cannot be opened because the developer
+      cannot be verified". Click Done.
+   b. Open System Settings -> Privacy & Security, scroll down to the
+      Security section, and click "Open Anyway" next to the message
+      about LaptopGuard.
+   c. Confirm with "Open" in the dialog that appears.
+   This is only needed the first time; after that the app opens with a
+   normal double-click.
 
 3. macOS will ask for two one-time permissions for LaptopGuard:
    - Accessibility (System Settings -> Privacy & Security): without it
@@ -25,5 +33,8 @@ LAPTOP GUARD - macOS
 6. Press your secret combo (default Ctrl+Shift+Z) to stop everything.
    If anything ever goes wrong, Cmd+Opt+Esc and force-quit the app.
 
-Files created next to the app: guard_config.json (your settings),
-guard.log (intrusion attempts), intruder.mp4 (webcam clip).
+Files are stored in ~/Library/Application Support/LaptopGuard:
+guard_config.json (your settings), guard.log (intrusion attempts),
+intruder.mp4 (webcam clip). In Finder, use Go -> Go to Folder and paste
+that path. (An unsigned app runs from a read-only location on macOS, so
+the files cannot live next to the app itself.)

@@ -101,12 +101,20 @@ class SettingsForm(tk.Frame):
                 "Alarm length must be above 0; clip length 0 or more.")
             return
 
-        save_config({
-            "phone": phone,
-            "key_combo": list(combo),
-            "alarm_duration_sec": alarm,
-            "record_seconds": record,
-        })
+        try:
+            save_config({
+                "phone": phone,
+                "key_combo": list(combo),
+                "alarm_duration_sec": alarm,
+                "record_seconds": record,
+            })
+        except OSError as exc:
+            # never fail silently - a frozen app has no console to show
+            # the traceback, so the Save button would look dead
+            messagebox.showerror(
+                "Could not save",
+                f"Settings could not be written:\n{exc}")
+            return
         if self._on_saved is not None:
             self._on_saved()
         else:

@@ -44,8 +44,18 @@ def app_dir() -> str:
     In a frozen (PyInstaller) build, __file__ points inside a temporary
     extraction folder that is deleted on exit, so the executable's own
     folder is used instead - settings survive across runs there.
+
+    Exception: on frozen macOS the executable lives inside the .app
+    bundle, and an unsigned app downloaded from the internet runs from a
+    read-only translocated path, so data files go to the standard
+    per-user Application Support folder instead.
     """
     if getattr(sys, "frozen", False):
+        if sys.platform == "darwin":
+            path = os.path.expanduser(
+                "~/Library/Application Support/LaptopGuard")
+            os.makedirs(path, exist_ok=True)
+            return path
         return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.abspath(__file__))
 

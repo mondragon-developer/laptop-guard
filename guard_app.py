@@ -28,11 +28,12 @@ import sys
 import tkinter as tk
 from tkinter import messagebox
 
-HERE = (
-    os.path.dirname(os.path.abspath(sys.executable))
-    if getattr(sys, "frozen", False)          # PyInstaller build
-    else os.path.dirname(os.path.abspath(__file__))
-)
+from laptop_guard import app_dir
+
+# Working directory for runtime files (config, log, webcam clip). On a
+# frozen macOS build this is ~/Library/Application Support/LaptopGuard,
+# because the .app itself may run from a read-only translocated path.
+HERE = app_dir()
 os.chdir(HERE)
 
 _COUNTDOWN_SEC = 5

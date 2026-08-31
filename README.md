@@ -20,7 +20,7 @@ Nothing is harmed. Pressing your secret combo (default `Ctrl+Shift+Z`) stops eve
 Grab the latest zip for your OS from the [Releases page](https://github.com/mondragon-developer/laptop-guard/releases), unzip it, and follow the `READ-ME-FIRST.txt` inside. Everything below this section is for running from source instead.
 
 - **Windows:** double-click `LaptopGuard.exe`. On the blue SmartScreen warning click **More info** -> **Run anyway** (the app is not code-signed; this appears once).
-- **macOS:** right-click `LaptopGuard.app` -> **Open** the first time (Gatekeeper), then grant **Accessibility** and **Camera** when macOS asks.
+- **macOS:** double-click `LaptopGuard.app`, click **Done** on the "developer cannot be verified" warning, then go to **System Settings -> Privacy & Security**, scroll down, and click **Open Anyway** (first launch only). Grant **Accessibility** and **Camera** when macOS asks.
 - Some antivirus tools flag any program that blocks the keyboard as suspicious; the guard suppresses input by design and sends nothing anywhere. Every release zip is built from this repo by GitHub Actions, and a new release is just a pushed version tag - the workflow builds and attaches both zips automatically.
 
 
@@ -109,7 +109,9 @@ Two ways in:
 Both show your current settings - including the combo - because only the owner opens them. Change whatever you like and click **Save**. The new settings apply the next time the guard starts.
 
 
-## What gets saved where (all inside the `laptop-guard` folder)
+## What gets saved where
+
+Running from source, everything lands inside the `laptop-guard` folder. The Windows release exe stores the same files next to itself, and the macOS release app stores them in `~/Library/Application Support/LaptopGuard` (an unsigned macOS app runs from a read-only location, so they cannot live next to the app).
 
 - `guard_config.json` - your settings from the Settings window. Plain text, so keep the folder private if the combo should stay secret. (The included `.gitignore` excludes it from version control, along with `guard.log` and the webcam clips; `guard_config.example.json` shows the file format and is safe to share.)
 - `guard.log` - one timestamped line per intrusion attempt.
