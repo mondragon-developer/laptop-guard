@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import subprocess
 import sys
 import threading
 import time
@@ -476,6 +477,8 @@ class InputGuard:
         self._on_attempt = on_attempt or (lambda source: None)
         self._triggered = threading.Event()   # fire alarm only once per session
         self._active = True
+        self._expected = {k.lower() for k in config.key_combo}
+        self._pressed: set[str] = set()
 
     # ---- internal helpers ------------------------------------------------
     @staticmethod
@@ -495,6 +498,37 @@ class InputGuard:
                 return s[: -len(suffix)]
         return s
 
+    # ---- event handlers (shared by the in-process and helper paths) ------
+    def _handle_press(self, kn: str) -> None:
+        if not self._active:
+            return
+        self._pressed.add(kn)
+
+        if self._expected.issubset(self._pressed):  # correct combo → deactivate
+            self._active = False
+            self._on_deact()
+            return
+
+        if not self._triggered.is_set():            # first intrusion → alarm
+            self._triggered.set()
+            self._on_unauth()
+        self._on_attempt(f"key:{kn}")
+
+    def _handle_release(self, kn: str) -> None:
+        self._pressed.discard(kn)
+
+    def _handle_mouse(self, kind: str) -> None:
+        if not self._active:
+            return
+        if not self._triggered.is_set():
+            self._triggered.set()
+            self._on_unauth()
+            self._on_attempt(f"mouse:{kind}")
+        elif kind == "click":
+            # clicks are logged even after the trigger; moves are not,
+            # so a moving mouse cannot flood the log file
+            self._on_attempt("mouse:click")
+
     # ---- public ----------------------------------------------------------
     @property
     def is_active(self) -> bool:
@@ -507,44 +541,70 @@ class InputGuard:
 
     def start(self) -> None:
         """Runs in its own thread. Blocks until deactivated."""
-        from pynput import keyboard, mouse
+        if sys.platform == "darwin":
+            self._start_helper()
+        else:
+            self._start_pynput()
 
-        expected = {k.lower() for k in self._config.key_combo}
-        pressed: set[str] = set()
+    # ---- platform implementations -----------------------------------------
+    def _start_helper(self) -> None:
+        """macOS: listen via a helper child process (see input_helper_main).
+
+        The helper reports one event per line on its stdout
+        ("key:press:ctrl", "key:release:ctrl", "mouse:move", ...). If the
+        helper dies, the guard deactivates rather than leaving the user
+        with suppressed input and no way to turn it off.
+        """
+        if getattr(sys, "frozen", False):
+            cmd = [sys.executable, INPUT_HELPER_ARG]
+        else:
+            cmd = [sys.executable, os.path.abspath(__file__),
+                   INPUT_HELPER_ARG]
+        proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, cwd=app_dir())
+        try:
+            for line in proc.stdout:
+                if not self._active:
+                    break
+                event = line.strip()
+                if event.startswith("key:press:"):
+                    self._handle_press(event[len("key:press:"):])
+                elif event.startswith("key:release:"):
+                    self._handle_release(event[len("key:release:"):])
+                elif event.startswith("mouse:"):
+                    self._handle_mouse(event[len("mouse:"):])
+                elif event.startswith("error:"):
+                    print(f"  [Guard] input helper: {event[len('error:'):]}",
+                          file=sys.stderr)
+            if self._active:
+                print("  [Guard] input helper exited unexpectedly; "
+                      "guard deactivated", file=sys.stderr)
+        finally:
+            self._active = False
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+
+    def _start_pynput(self) -> None:
+        """Windows/Linux: in-process listeners (no TSM restriction there)."""
+        from pynput import keyboard, mouse
 
         # ── keyboard callbacks (pynput runs them in ITS OWN thread) ──
         def on_press(key):
-            if not self._active:
-                return
-            kn = self._key_name(key)
-            pressed.add(kn)
-
-            if expected.issubset(pressed):          # correct combo → deactivate
-                self._active = False
-                self._on_deact()
-                return
-
-            if not self._triggered.is_set():        # first intrusion → alarm
-                self._triggered.set()
-                self._on_unauth()
-            self._on_attempt(f"key:{kn}")
+            self._handle_press(self._key_name(key))
 
         def on_release(key):
-            pressed.discard(self._key_name(key))
+            self._handle_release(self._key_name(key))
 
         # ── mouse callbacks ──
         def on_move(x, y):
-            if self._active and not self._triggered.is_set():
-                self._triggered.set()
-                self._on_unauth()
-                self._on_attempt("mouse:move")
+            self._handle_mouse("move")
 
         def on_click(x, y, button, pressed_flag):
-            if self._active and pressed_flag:
-                if not self._triggered.is_set():
-                    self._triggered.set()
-                    self._on_unauth()
-                self._on_attempt("mouse:click")
+            if pressed_flag:
+                self._handle_mouse("click")
 
         # suppress=True blocks input from reaching the OS; fall back to
         # passive listeners on platforms where suppression is unsupported
@@ -569,6 +629,92 @@ class InputGuard:
 
         k_list.stop()
         m_list.stop()
+
+
+# ──────────────────────────────────────────────
+# 6b. INPUT HELPER PROCESS  (macOS)
+# ──────────────────────────────────────────────
+INPUT_HELPER_ARG = "--laptop-guard-input-helper"
+
+
+def input_helper_main() -> None:
+    """Run the pynput listeners in a dedicated helper process.
+
+    Entry point for the child process spawned by InputGuard on macOS.
+    macOS 26 (Tahoe) kills any process that calls the Text Services
+    Manager off the main dispatch queue, and pynput's keyboard listener
+    does exactly that when it runs on a background thread (SIGTRAP in
+    TSMGetInputSourceProperty; unfixed upstream as of pynput 1.7.7). The
+    listener therefore lives in this helper, whose MAIN thread is free to
+    host the keyboard listener's run loop. Detected input is reported to
+    the parent as one line per event on stdout.
+
+    The helper must never outlive its parent: it watches stdin and exits
+    as soon as the pipe closes (i.e. the parent died), so input is never
+    left suppressed with nobody able to turn it off.
+    """
+    # A windowed PyInstaller build may start with sys.stdout set to None;
+    # the parent reads events from the stdout pipe, so it must exist.
+    if sys.stdout is None:
+        sys.stdout = open(os.dup(1), "w", encoding="utf-8", closefd=False)
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w")
+
+    def _emit(event: str) -> None:
+        try:
+            sys.stdout.write(event + "\n")
+            sys.stdout.flush()
+        except (OSError, ValueError):
+            os._exit(0)                    # parent gone
+
+    def _watch_parent() -> None:
+        try:
+            sys.stdin.read()               # EOF == parent process died
+        except Exception:
+            pass
+        os._exit(0)
+
+    threading.Thread(target=_watch_parent, daemon=True).start()
+
+    from pynput import keyboard, mouse
+
+    def on_press(key):
+        _emit("key:press:" + InputGuard._key_name(key))
+
+    def on_release(key):
+        _emit("key:release:" + InputGuard._key_name(key))
+
+    def on_move(x, y):
+        _emit("mouse:move")
+
+    def on_click(x, y, button, is_pressed):
+        if is_pressed:
+            _emit("mouse:click")
+
+    def _launch(suppress: bool) -> None:
+        m_list = mouse.Listener(on_move=on_move, on_click=on_click,
+                                suppress=suppress)
+        k_list = keyboard.Listener(on_press=on_press,
+                                   on_release=on_release, suppress=suppress)
+        m_list.start()
+        try:
+            # Blocks; MUST run on this process's main thread so pynput's
+            # Text Services Manager calls stay on the main dispatch queue.
+            k_list.run()
+        finally:
+            m_list.stop()
+
+    # suppress=True blocks input from reaching the OS; if the tap cannot
+    # be created (e.g. the Accessibility grant is missing), fall back to
+    # passive listeners that only watch
+    try:
+        _launch(suppress=True)
+    except Exception as exc:
+        _emit("error:" + str(exc).replace("\n", " "))
+        try:
+            _launch(suppress=False)
+        except Exception as exc2:
+            _emit("error:fatal: " + str(exc2).replace("\n", " "))
 
 
 # ──────────────────────────────────────────────
@@ -654,4 +800,8 @@ if __name__ == "__main__":
     # (guard_setup.py / setup.bat / Setup.command).
     # Built-in defaults apply when the file does not exist yet.
     os.chdir(app_dir())
-    LaptopGuard(load_config()).activate()
+    if INPUT_HELPER_ARG in sys.argv[1:]:
+        # spawned by InputGuard on macOS: just run the input listeners
+        input_helper_main()
+    else:
+        LaptopGuard(load_config()).activate()

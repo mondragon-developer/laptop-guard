@@ -32,7 +32,7 @@ Grab the latest zip for your OS from the [Releases page](https://github.com/mond
 - **`pygame` + `numpy`** - the alarm: a harsh 800 Hz square wave synthesized as a NumPy buffer and looped through the pygame mixer; on Windows a stdlib `winsound` beeper takes over if pygame is missing.
 - **`opencv-python`** - records the short webcam clip of the intruder (`mp4v`, with an XVID/AVI fallback when the codec is unavailable).
 - **`powercfg`** (Windows) - sleep/hibernate timeouts are set to "never" while the guard is active and restored exactly afterwards; on macOS a no-op manager keeps the same interface.
-- **Threading model** - pynput hook callbacks never block (they only start daemon threads for the alarm and recorder); the tkinter warning screen always runs on the main thread, which both Tk/Cocoa on macOS and Windows hooks require.
+- **Threading model** - pynput hook callbacks never block (they only start daemon threads for the alarm and recorder); the tkinter warning screen always runs on the main thread, which both Tk/Cocoa on macOS and Windows hooks require. On macOS the pynput listeners additionally run in a helper subprocess (`input_helper_main`, respawned from the same binary), because macOS 26 kills any process whose keyboard listener calls the Text Services Manager off the main dispatch queue (SIGTRAP in `TSMGetInputSourceProperty`, unfixed in pynput as of 1.7.7). The helper reports events to the parent over a pipe and self-terminates if the parent dies, so input is never left suppressed.
 - **Launchers** - `guard.bat` / `setup.bat` (Windows) and `LaptopGuard.command` / `Setup.command` (macOS) wrap the app in a double-click experience, and `guard_app.py` auto-installs missing packages on launch.
 
 The code follows SOLID principles: each component (config, alarm, screen, power, webcam, input) is a small class behind a tiny interface, wired together by the `LaptopGuard` orchestrator, so any piece (for example the alarm backend) can be swapped without touching the rest.
@@ -40,12 +40,12 @@ The code follows SOLID principles: each component (config, alarm, screen, power,
 
 ## The one-icon app (Windows and Mac)
 
-`guard_app.py` wraps everything into a single double-click experience. On Windows the desktop shortcut points to it; on Mac it is what `LaptopGuard.command` runs (double-click it, or an alias of it):
+`guard_app.py` wraps everything into a single double-click experience. On Windows the desktop shortcut points to it; on Mac it runs either as the frozen `LaptopGuard.app` (release zip) or inside Terminal via `LaptopGuard.command` (source checkout) - double-click either one, or an alias of it:
 
 - **First run ever:** a small window asks whether to keep the default settings (combo `Ctrl+Shift+Z`, default phone number, alarm/clip times) or **Customize...** them. Either choice saves `guard_config.json`, so this screen never appears again.
 - **Every later run:** a 5-second countdown splash ("Activating in 5 s...") and the guard activates by itself. The **Settings** button on the splash is the only way back into the settings - exactly the "request it" path. Closing the window does NOT activate the guard.
 - Missing packages are installed automatically on launch.
-- On Windows no console window appears (it runs through `pythonw.exe`). On Mac the Terminal window stays open in the background - that is what holds the Accessibility/Camera permissions.
+- On Windows no console window appears (it runs through `pythonw.exe`). On Mac the Accessibility/Camera permissions belong to whichever host runs the app: with the `.app` flow that is LaptopGuard itself; with the `.command` flow it is Terminal, whose window stays open in the background.
 - On Mac, the app checks the Accessibility grant up front and explains how to fix it if the grant is missing.
 - To brand it, drop an `icon.ico` (Windows) or `icon.png` (Mac) into the `laptop-guard` folder: the window and the desktop shortcut pick it up.
 

@@ -14,9 +14,11 @@ Double-click flow:
     see and block input) is checked up front, with instructions if the
     grant is missing.
 
-Launched without a console on Windows (pythonw.exe shortcut); on macOS
-it runs inside Terminal via LaptopGuard.command, which is what holds
-the Accessibility/Camera permission grants.
+Launched without a console on Windows (pythonw.exe shortcut). On macOS
+there are two supported flows: the frozen LaptopGuard.app from the release
+zip, and the source checkout run inside Terminal via LaptopGuard.command.
+Whichever host is used is the one that must hold the Accessibility/Camera
+permission grants.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ import sys
 import tkinter as tk
 from tkinter import messagebox
 
-from laptop_guard import app_dir
+from laptop_guard import INPUT_HELPER_ARG, app_dir
 
 # Working directory for runtime files (config, log, webcam clip). On a
 # frozen macOS build this is ~/Library/Application Support/LaptopGuard,
@@ -114,6 +116,14 @@ def _ensure_deps(status: tk.Label) -> bool:
 
 
 def main() -> None:
+    if INPUT_HELPER_ARG in sys.argv[1:]:
+        # macOS helper process respawned by InputGuard: run the pynput
+        # listeners on this process's main thread and report events on
+        # stdout (macOS 26 kills pynput's listener on background threads).
+        # Must run before any tkinter window is created.
+        from laptop_guard import input_helper_main
+        input_helper_main()
+        return
     _silence_stdio()
     from laptop_guard import (CONFIG_FILE, GuardConfig, LaptopGuard,
                               load_config, save_config)
