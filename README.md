@@ -20,7 +20,7 @@ Nothing is harmed. Pressing your secret combo (default `Ctrl+Shift+Z`) stops eve
 Grab the latest zip for your OS from the [Releases page](https://github.com/mondragon-developer/laptop-guard/releases), unzip it, and follow the `READ-ME-FIRST.txt` inside. Everything below this section is for running from source instead.
 
 - **Windows:** double-click `LaptopGuard.exe`. On the blue SmartScreen warning click **More info** -> **Run anyway** (the app is not code-signed; this appears once).
-- **macOS:** double-click `LaptopGuard.app`, click **Done** on the "developer cannot be verified" warning, then go to **System Settings -> Privacy & Security**, scroll down, and click **Open Anyway** (first launch only). Grant **Accessibility** and **Camera** when macOS asks.
+- **macOS:** double-click `LaptopGuard.app`, click **Done** on the "developer cannot be verified" warning, then go to **System Settings -> Privacy & Security**, scroll down, and click **Open Anyway** (first launch only). The app then asks macOS for **Accessibility** and waits until you turn it on (Privacy & Security -> Accessibility); **Camera** is requested on the first trigger. After updating to a new version, remove LaptopGuard from the Accessibility list and add it again: macOS ties the grant to the exact app file, so a stale entry looks enabled but does nothing.
 - Some antivirus tools flag any program that blocks the keyboard as suspicious; the guard suppresses input by design and sends nothing anywhere. Every release zip is built from this repo by GitHub Actions, and a new release is just a pushed version tag - the workflow builds and attaches both zips automatically.
 
 
@@ -32,8 +32,9 @@ Grab the latest zip for your OS from the [Releases page](https://github.com/mond
 - **`pygame` + `numpy`** - the alarm: a harsh 800 Hz square wave synthesized as a NumPy buffer and looped through the pygame mixer; on Windows a stdlib `winsound` beeper takes over if pygame is missing.
 - **`opencv-python`** - records the short webcam clip of the intruder (`mp4v`, with an XVID/AVI fallback when the codec is unavailable).
 - **`powercfg`** (Windows) - sleep/hibernate timeouts are set to "never" while the guard is active and restored exactly afterwards; on macOS a no-op manager keeps the same interface.
-- **Threading model** - pynput hook callbacks never block (they only start daemon threads for the alarm and recorder); the tkinter warning screen always runs on the main thread, which both Tk/Cocoa on macOS and Windows hooks require. On macOS the pynput listeners additionally run in a helper subprocess (`input_helper_main`, respawned from the same binary), because macOS 26 kills any process whose keyboard listener calls the Text Services Manager off the main dispatch queue (SIGTRAP in `TSMGetInputSourceProperty`, unfixed in pynput as of 1.7.7). The helper reports events to the parent over a pipe and self-terminates if the parent dies, so input is never left suppressed.
+- **Threading model** - pynput hook callbacks never block (they only start daemon threads for the alarm and recorder); the tkinter warning screen always runs on the main thread, which both Tk/Cocoa on macOS and Windows hooks require. On macOS the pynput listeners additionally run in a helper subprocess (`input_helper_main`, respawned from the same binary), because macOS 26 kills any process whose keyboard listener calls the Text Services Manager off the main dispatch queue (SIGTRAP in `TSMGetInputSourceProperty`, unfixed in pynput as of 1.7.7). The helper reports events to the parent over a pipe and self-terminates if the parent dies, so input is never left suppressed. If macOS refuses the event tap (pynput signals that only by returning early), the helper says why and the guard switches itself off with an explanation instead of exiting silently. The launcher's Tk root is the only one the process ever creates: it is hidden while the guard waits and reused for the warning screen, because Tk on macOS crashes when a destroyed root is followed by a second one (Tk ticket c18c36f8).
 - **Launchers** - `guard.bat` / `setup.bat` (Windows) and `LaptopGuard.command` / `Setup.command` (macOS) wrap the app in a double-click experience, and `guard_app.py` auto-installs missing packages on launch.
+- **Diagnostics** - frozen builds have no console, so prints, tracebacks and the input helper's own output land in `guard_debug.log` in the data folder.
 
 The code follows SOLID principles: each component (config, alarm, screen, power, webcam, input) is a small class behind a tiny interface, wired together by the `LaptopGuard` orchestrator, so any piece (for example the alarm backend) can be swapped without touching the rest.
 
@@ -46,7 +47,7 @@ The code follows SOLID principles: each component (config, alarm, screen, power,
 - **Every later run:** a 5-second countdown splash ("Activating in 5 s...") and the guard activates by itself. The **Settings** button on the splash is the only way back into the settings - exactly the "request it" path. Closing the window does NOT activate the guard.
 - Missing packages are installed automatically on launch.
 - On Windows no console window appears (it runs through `pythonw.exe`). On Mac the Accessibility/Camera permissions belong to whichever host runs the app: with the `.app` flow that is LaptopGuard itself; with the `.command` flow it is Terminal, whose window stays open in the background.
-- On Mac, the app checks the Accessibility grant up front and explains how to fix it if the grant is missing.
+- On Mac, the app asks macOS for the Accessibility grant up front and waits on a "Permission needed" window until it is turned on. If macOS still refuses the input tap later (typically a stale grant after an update), the guard switches itself off and says so instead of vanishing.
 - To brand it, drop an `icon.ico` (Windows) or `icon.png` (Mac) into the `laptop-guard` folder: the window and the desktop shortcut pick it up.
 
 The classic launchers below remain available and work exactly as before.
@@ -116,6 +117,7 @@ Running from source, everything lands inside the `laptop-guard` folder. The Wind
 - `guard_config.json` - your settings from the Settings window. Plain text, so keep the folder private if the combo should stay secret. (The included `.gitignore` excludes it from version control, along with `guard.log` and the webcam clips; `guard_config.example.json` shows the file format and is safe to share.)
 - `guard.log` - one timestamped line per intrusion attempt.
 - `intruder.mp4` (or `.avi`) - the webcam clip, recorded once per activation.
+- `guard_debug.log` - what the app did (helper start/stop, errors, tracebacks). Attach it when reporting a problem.
 
 Advanced users can also edit `guard_config.json` directly:
 

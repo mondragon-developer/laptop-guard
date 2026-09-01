@@ -62,6 +62,21 @@ def app_dir() -> str:
 
 
 CONFIG_FILE = os.path.join(app_dir(), "guard_config.json")
+DEBUG_LOG = os.path.join(app_dir(), "guard_debug.log")
+
+
+def log_debug(msg: str) -> None:
+    """Append a timestamped line to guard_debug.log; echoed to stderr
+    unless stderr already is that file (frozen builds redirect it)."""
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {msg}"
+    try:
+        with open(DEBUG_LOG, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass
+    err = sys.stderr
+    if err is not None and getattr(err, "name", None) != DEBUG_LOG:
+        print(line, file=err)
 
 MESSAGE_TEMPLATE = (
     "⚠️  SYSTEM BREACH DETECTED  ⚠️\n\n"
@@ -258,10 +273,20 @@ def _make_alarm() -> AlarmPlayer:
 # 3. FAKE SCREEN  (Single Responsibility)
 # ──────────────────────────────────────────────
 class FakeScreen:
-    """Full-screen black tkinter window with the warning text."""
+    """Full-screen black tkinter window with the warning text.
 
-    def __init__(self, config: GuardConfig) -> None:
+    Pass the application's existing Tk root when there is one. Tk Aqua
+    remembers the first interpreter created in a process and keeps using
+    it after it is destroyed, so destroying that root and creating a
+    second one crashes on macOS (Tk ticket c18c36f8, cpython issue
+    123204). A shared root is shown full screen and withdrawn again on
+    deactivation; without one, show() owns a root of its own.
+    """
+
+    def __init__(self, config: GuardConfig,
+                 root: Optional[tk.Tk] = None) -> None:
         self._config = config
+        self._root = root
         self._deactivate_evt = threading.Event()   # thread-safe signal
 
     def show(self) -> None:
@@ -271,13 +296,21 @@ class FakeScreen:
         windows created on background threads.
         """
         self._deactivate_evt.clear()
+        shared = self._root is not None
 
         try:
-            root = tk.Tk()
+            root = self._root if shared else tk.Tk()
+            if shared:
+                for widget in root.winfo_children():
+                    widget.destroy()
+                root.resizable(True, True)
+                root.deiconify()
             root.title("System Alert")
             root.attributes("-fullscreen", True)
             root.configure(bg="black")
             root.attributes("-topmost", True)
+            root.lift()
+            _bring_app_forward()
 
             tk.Label(
                 root, text=self._config.message,
@@ -288,14 +321,23 @@ class FakeScreen:
 
             root.protocol("WM_DELETE_WINDOW", lambda: None)  # block × button
 
+            def _close() -> None:
+                if not shared:
+                    root.destroy()
+                    return
+                root.attributes("-fullscreen", False)
+                root.attributes("-topmost", False)
+                root.withdraw()
+                root.quit()
+
             def _poll() -> None:
                 if self._deactivate_evt.is_set():
-                    root.destroy()
+                    _close()
                     return
                 root.after(100, _poll)          # check every 100 ms
 
             root.after(100, _poll)
-            root.mainloop()                     # ← blocks here
+            root.mainloop()                     # blocks here
         except Exception as exc:
             # a screen failure must never abort activate()'s main thread
             print(f"  [Guard] warning screen failed: {exc}", file=sys.stderr)
@@ -303,6 +345,20 @@ class FakeScreen:
     def deactivate(self) -> None:
         """Thread-safe: signal the tkinter loop to close."""
         self._deactivate_evt.set()
+
+
+def _bring_app_forward() -> None:
+    """macOS only activates an app when its first window appears; the
+    warning screen comes much later, while the intruder's app is in
+    front, so ask AppKit to bring the guard forward."""
+    if sys.platform != "darwin":
+        return
+    try:
+        from AppKit import NSApplication
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+    except Exception as exc:
+        print(f"  [Guard] could not bring the app forward: {exc}",
+              file=sys.stderr)
 
 
 # ──────────────────────────────────────────────
@@ -479,6 +535,8 @@ class InputGuard:
         self._active = True
         self._expected = {k.lower() for k in config.key_combo}
         self._pressed: set[str] = set()
+        # why the input watcher gave up, once it has (e.g. "accessibility")
+        self.failure: Optional[str] = None
 
     # ---- internal helpers ------------------------------------------------
     @staticmethod
@@ -553,16 +611,25 @@ class InputGuard:
         The helper reports one event per line on its stdout
         ("key:press:ctrl", "key:release:ctrl", "mouse:move", ...). If the
         helper dies, the guard deactivates rather than leaving the user
-        with suppressed input and no way to turn it off.
+        with suppressed input and no way to turn it off; the reason it
+        gave ("error:fatal:<reason>") is kept in self.failure for the UI.
         """
         if getattr(sys, "frozen", False):
             cmd = [sys.executable, INPUT_HELPER_ARG]
         else:
             cmd = [sys.executable, os.path.abspath(__file__),
                    INPUT_HELPER_ARG]
+        log_debug(f"starting input helper: {cmd}")
+        # the helper's stderr (pynput warnings, tracebacks) goes to the
+        # debug log: a windowed app has nowhere else to show it
+        try:
+            err = open(DEBUG_LOG, "a", encoding="utf-8")
+        except OSError:
+            err = None
         proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, text=True, cwd=app_dir())
+            stderr=err if err is not None else subprocess.DEVNULL,
+            text=True, cwd=app_dir())
         try:
             for line in proc.stdout:
                 if not self._active:
@@ -574,18 +641,24 @@ class InputGuard:
                     self._handle_release(event[len("key:release:"):])
                 elif event.startswith("mouse:"):
                     self._handle_mouse(event[len("mouse:"):])
+                elif event.startswith("error:fatal:"):
+                    self.failure = event[len("error:fatal:"):] or "helper"
+                    log_debug(f"input helper gave up: {self.failure}")
                 elif event.startswith("error:"):
-                    print(f"  [Guard] input helper: {event[len('error:'):]}",
-                          file=sys.stderr)
+                    log_debug(f"input helper: {event[len('error:'):]}")
             if self._active:
-                print("  [Guard] input helper exited unexpectedly; "
-                      "guard deactivated", file=sys.stderr)
+                self.failure = self.failure or "helper"
+                log_debug("input helper exited while the guard was active; "
+                          "guard deactivated")
         finally:
             self._active = False
             try:
                 proc.terminate()
-            except OSError:
-                pass
+                log_debug(f"input helper exit code: {proc.wait(timeout=5)}")
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                log_debug(f"input helper shutdown: {exc}")
+            if err is not None:
+                err.close()
 
     def _start_pynput(self) -> None:
         """Windows/Linux: in-process listeners (no TSM restriction there)."""
@@ -691,7 +764,14 @@ def input_helper_main() -> None:
         if is_pressed:
             _emit("mouse:click")
 
-    def _launch(suppress: bool) -> None:
+    def _launch(suppress: bool) -> str:
+        """Run the listeners until the keyboard listener returns.
+
+        Nothing here ever calls stop(), so run() returning at all means
+        macOS refused the event tap: pynput reports that only by
+        returning early, never by raising. The result names the likely
+        cause for the parent.
+        """
         m_list = mouse.Listener(on_move=on_move, on_click=on_click,
                                 suppress=suppress)
         k_list = keyboard.Listener(on_press=on_press,
@@ -703,18 +783,22 @@ def input_helper_main() -> None:
             k_list.run()
         finally:
             m_list.stop()
+        trusted = getattr(k_list, "IS_TRUSTED", False)
+        return "tap" if trusted else "accessibility"
 
-    # suppress=True blocks input from reaching the OS; if the tap cannot
-    # be created (e.g. the Accessibility grant is missing), fall back to
-    # passive listeners that only watch
+    # suppress=True blocks input from reaching the OS. Without the
+    # Accessibility grant no tap can be created at all, so give up and
+    # let the parent explain; if the grant is there but the blocking tap
+    # still fails, at least keep watching passively.
     try:
-        _launch(suppress=True)
+        reason = _launch(suppress=True)
+        if reason == "accessibility":
+            _emit("error:fatal:accessibility")
+            return
+        _emit("error:input suppression unavailable; watching only")
+        _emit("error:fatal:" + _launch(suppress=False))
     except Exception as exc:
-        _emit("error:" + str(exc).replace("\n", " "))
-        try:
-            _launch(suppress=False)
-        except Exception as exc2:
-            _emit("error:fatal: " + str(exc2).replace("\n", " "))
+        _emit("error:fatal:" + str(exc).replace("\n", " "))
 
 
 # ──────────────────────────────────────────────
@@ -723,10 +807,11 @@ def input_helper_main() -> None:
 class LaptopGuard:
     """Single entry-point that wires everything together."""
 
-    def __init__(self, config: Optional[GuardConfig] = None) -> None:
+    def __init__(self, config: Optional[GuardConfig] = None,
+                 root: Optional[tk.Tk] = None) -> None:
         self.config = config or GuardConfig()
         self._alarm: AlarmPlayer = _make_alarm()
-        self._screen = FakeScreen(self.config)
+        self._screen = FakeScreen(self.config, root)
         self._power: PowerManager = _make_power()
         self._recorder = WebcamRecorder(self.config)
 
@@ -758,7 +843,13 @@ class LaptopGuard:
             print(f"  [Guard] log write failed: {exc}", file=sys.stderr)
 
     # ---- public API ------------------------------------------------------
-    def activate(self) -> None:
+    def activate(self) -> Optional[str]:
+        """Block until the guard is deactivated.
+
+        Returns None after a normal deactivation, or a short reason
+        ("accessibility", "helper", ...) when the input watcher failed
+        and the guard switched itself off.
+        """
         # Do NOT print the combo here: the console stays visible until the
         # first trigger, and an "intruder" could just read the way out.
         print("\n  [Guard] ACTIVE - keyboard and mouse are blocked.\n")
@@ -788,7 +879,12 @@ class LaptopGuard:
 
         self._alarm.stop()
         self._power.restore()
-        print("  [Guard] DEACTIVATED - all normal.\n")
+        if guard.failure:
+            print(f"  [Guard] DEACTIVATED - input watcher failed "
+                  f"({guard.failure}); see {DEBUG_LOG}\n", file=sys.stderr)
+        else:
+            print("  [Guard] DEACTIVATED - all normal.\n")
+        return guard.failure
 
 
 # ──────────────────────────────────────────────
@@ -803,5 +899,5 @@ if __name__ == "__main__":
     if INPUT_HELPER_ARG in sys.argv[1:]:
         # spawned by InputGuard on macOS: just run the input listeners
         input_helper_main()
-    else:
-        LaptopGuard(load_config()).activate()
+    elif LaptopGuard(load_config()).activate():
+        sys.exit(1)

@@ -4,6 +4,7 @@ guard_config.json
 
 # Runtime artifacts - intrusion log and webcam clips of people.
 guard.log
+guard_debug.log
 intruder.mp4
 intruder.avi
 

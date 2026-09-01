@@ -28,4 +28,6 @@ would). The app does not send anything anywhere; it only writes files
 in this folder.
 
 Files created next to the exe: guard_config.json (your settings),
-guard.log (intrusion attempts), intruder.mp4 (webcam clip).
+guard.log (intrusion attempts), intruder.mp4 (webcam clip) and
+guard_debug.log (what the app did, for troubleshooting - send it along
+when reporting a problem).

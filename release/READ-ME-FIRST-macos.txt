@@ -15,26 +15,38 @@ LAPTOP GUARD - macOS
    This is only needed the first time; after that the app opens with a
    normal double-click.
 
-3. macOS will ask for two one-time permissions for LaptopGuard:
-   - Accessibility (System Settings -> Privacy & Security): without it
-     the guard cannot see or block the keyboard and mouse. Enable it,
-     then quit and reopen the app.
-   - Camera: needed for the intruder clip.
+3. Accessibility permission. The guard cannot see or block the keyboard
+   and mouse without it, so on the first launch the app asks macOS for
+   it and waits: a "Permission needed" window stays open until access
+   is granted. Click "Open System Settings" (or go to System Settings ->
+   Privacy & Security -> Accessibility) and turn on LaptopGuard. The app
+   continues on its own; no need to quit and reopen.
 
-4. First run: a small window shows the default settings (secret combo
+   After installing a NEW VERSION the old entry still shows as enabled
+   but no longer counts (macOS ties the permission to the exact app
+   file). If the app stays on the "Permission needed" window or tells
+   you it stopped, select LaptopGuard in the Accessibility list, press
+   the "-" button, reopen the app and accept the request again.
+
+4. Camera: macOS asks for it the first time an intruder triggers the
+   guard. It is needed only for the intruder clip.
+
+5. First run: a small window shows the default settings (secret combo
    Ctrl+Shift+Z, phone number on the fake warning, alarm and clip
    lengths). Choose "Use defaults and activate" or "Customize...".
    Every later run activates by itself after a 5-second countdown.
 
-5. Walk away. Any key press, click, or mouse movement triggers a
+6. Walk away. Any key press, click, or mouse movement triggers a
    full-screen warning, a loud alarm, and a short webcam clip of the
    intruder, and every attempt is written to guard.log.
 
-6. Press your secret combo (default Ctrl+Shift+Z) to stop everything.
+7. Press your secret combo (default Ctrl+Shift+Z) to stop everything.
    If anything ever goes wrong, Cmd+Opt+Esc and force-quit the app.
 
 Files are stored in ~/Library/Application Support/LaptopGuard:
 guard_config.json (your settings), guard.log (intrusion attempts),
-intruder.mp4 (webcam clip). In Finder, use Go -> Go to Folder and paste
-that path. (An unsigned app runs from a read-only location on macOS, so
-the files cannot live next to the app itself.)
+intruder.mp4 (webcam clip) and guard_debug.log (what the app did, for
+troubleshooting - send it along when reporting a problem). In Finder,
+use Go -> Go to Folder and paste that path. (An unsigned app runs from a
+read-only location on macOS, so the files cannot live next to the app
+itself.)

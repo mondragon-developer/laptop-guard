@@ -68,6 +68,6 @@ jobs:
         run: |
           gh release create "$TAG" \
             --title "laptop-guard $TAG" \
-            --notes "Download the zip for your OS, unzip, and follow READ-ME-FIRST.txt inside. No Python installation needed. Windows: click 'More info -> Run anyway' on the SmartScreen warning. macOS: on the first launch click Done on the Gatekeeper warning, then System Settings -> Privacy & Security -> Open Anyway, and grant Accessibility and Camera when asked." \
+            --notes "Download the zip for your OS, unzip, and follow READ-ME-FIRST.txt inside. No Python installation needed. Windows: click 'More info -> Run anyway' on the SmartScreen warning. macOS: on the first launch click Done on the Gatekeeper warning, then System Settings -> Privacy & Security -> Open Anyway; the app then asks for Accessibility and waits until it is turned on (after an update, remove LaptopGuard from the Accessibility list and add it again)." \
             artifacts/laptop-guard-windows/laptop-guard-windows.zip \
             artifacts/laptop-guard-macos/laptop-guard-macos.zip
