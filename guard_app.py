@@ -40,6 +40,7 @@ from laptop_guard import DEBUG_LOG, INPUT_HELPER_ARG, app_dir, log_debug
 # frozen macOS build this is ~/Library/Application Support/LaptopGuard,
 # because the .app itself may run from a read-only translocated path.
 HERE = app_dir()
+os.makedirs(HERE, exist_ok=True)
 os.chdir(HERE)
 
 _COUNTDOWN_SEC = 5
@@ -47,7 +48,6 @@ _ICON = os.path.join(HERE, "icon.ico")        # Windows: window + shortcut
 _ICON_PNG = os.path.join(HERE, "icon.png")    # macOS/Linux window icon
 _AX_SETTINGS_URL = ("x-apple.systempreferences:com.apple.preference.security"
                     "?Privacy_Accessibility")
-_DEBUG_LOG_MAX = 1_000_000
 
 
 def _ax_trusted(prompt: bool = False) -> bool:
@@ -94,6 +94,7 @@ def _wait_for_accessibility(root: tk.Tk) -> bool:
     if _ax_trusted():
         return True
     _ax_trusted(prompt=True)
+    log_debug("accessibility not granted yet; waiting")
     for widget in root.winfo_children():
         widget.destroy()
     tk.Label(root, text="Permission needed",
@@ -105,19 +106,34 @@ def _wait_for_accessibility(root: tk.Tk) -> bool:
              "1. macOS just asked for it. Click \"Open System Settings\".\n"
              "2. In Privacy & Security -> Accessibility, turn on LaptopGuard\n"
              "   (Terminal instead, if you started the app from Terminal).\n"
-             "3. Already listed and on, but still stuck here? Select it,\n"
-             "   press -, then add it again. This is normal after\n"
-             "   installing a new version.\n\n"
+             "3. Switch already on but this window not moving? The entry\n"
+             "   belongs to an older copy and its switch does nothing:\n"
+             "   select LaptopGuard, press -, then reopen this app and\n"
+             "   accept the fresh request. Normal after every update.\n\n"
              "This window continues by itself once access is granted.",
     ).pack(padx=20, pady=4)
     btns = tk.Frame(root)
-    btns.pack(pady=10)
+    btns.pack(pady=(10, 2))
     tk.Button(btns, text="Open System Settings", width=20,
               command=_open_ax_settings).pack(side="left", padx=6)
     tk.Button(btns, text="Quit", width=10,
               command=root.quit).pack(side="left", padx=6)
 
-    state = {"granted": False, "done": False}
+    state = {"granted": False, "done": False, "polls": 0}
+
+    def _try_anyway() -> None:
+        # safe now that a refused tap ends on the explanation screen; the
+        # helper's tap attempt also re-registers the app with macOS
+        log_debug("accessibility wait skipped by user (Try anyway)")
+        state["granted"] = True
+        state["done"] = True
+        root.quit()
+
+    tk.Button(root, text="Try anyway", width=12,
+              command=_try_anyway).pack(pady=(0, 4))
+    wait_lbl = tk.Label(root, fg="#555",
+                        text="Waiting for macOS to report access...")
+    wait_lbl.pack(pady=(0, 10))
 
     def _poll() -> None:
         if state["done"]:
@@ -125,15 +141,24 @@ def _wait_for_accessibility(root: tk.Tk) -> bool:
         if _ax_trusted():
             state["granted"] = True
             state["done"] = True
+            log_debug(f"accessibility granted after {state['polls']} s")
             root.quit()
             return
+        state["polls"] += 1
+        wait_lbl.config(
+            text=f"macOS still reports access is off ({state['polls']} s).\n"
+                 "Turned it on already? Remove the entry with - and reopen\n"
+                 "the app, or press \"Try anyway\".")
+        if state["polls"] % 15 == 0:
+            log_debug(f"still waiting for accessibility ({state['polls']} s);"
+                      " AXIsProcessTrusted is false")
         root.after(1000, _poll)
 
     root.after(1000, _poll)
     root.mainloop()
     state["done"] = True      # a pending _poll must not quit the next loop
-    log_debug("accessibility " +
-              ("granted" if state["granted"] else "not granted; user quit"))
+    if not state["granted"]:
+        log_debug("accessibility not granted; user quit")
     return state["granted"]
 
 
@@ -162,9 +187,7 @@ def _setup_stdio() -> None:
     their terminal; pythonw.exe (no streams at all) gets devnull."""
     if getattr(sys, "frozen", False):
         try:
-            if (os.path.exists(DEBUG_LOG)
-                    and os.path.getsize(DEBUG_LOG) > _DEBUG_LOG_MAX):
-                open(DEBUG_LOG, "w").close()
+            os.makedirs(os.path.dirname(DEBUG_LOG), exist_ok=True)
             fh = open(DEBUG_LOG, "a", encoding="utf-8", buffering=1)
             sys.stdout = sys.stderr = fh
             return
@@ -228,8 +251,9 @@ def _ensure_deps(status: tk.Label) -> bool:
     if getattr(sys, "frozen", False):
         return True
     os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
-    modules = {"pynput": "pynput", "numpy": "numpy",
-               "pygame": "pygame", "cv2": "opencv-python"}
+    modules = {"pynput": "pynput", "numpy": "numpy", "cv2": "opencv-python"}
+    if sys.platform != "win32":
+        modules["pygame"] = "pygame"
     missing = [pkg for mod, pkg in modules.items()
                if importlib.util.find_spec(mod) is None]
     if not missing:
@@ -250,6 +274,31 @@ def _ensure_deps(status: tk.Label) -> bool:
 
 
 def main() -> None:
+    from guard_runtime.version import VERSION
+    from guard_runtime.displays import enable_dpi_awareness
+    enable_dpi_awareness()
+    if "--check" in sys.argv[1:]:
+        # Hardware-free smoke check, including in the packaged executable.
+        import json
+        from guard_runtime.storage import RuntimePaths
+        from guard_runtime.video import VideoRing
+        from guard_runtime.system_events import parse_events
+        from guard_runtime.auto_guard import IDLE_SECONDS
+        from laptop_guard import load_config
+        load_config()
+        parse_events("<Events/>")
+        paths = RuntimePaths()
+        result = {"status": "ok", "version": VERSION, "data": str(paths.root),
+                  "logs": str(paths.logs), "videos": str(paths.videos),
+                  "config": os.path.join(HERE, "guard_config.json"),
+                  "automatic_idle_seconds": IDLE_SECONDS}
+        if "--check-output" in sys.argv:
+            output = sys.argv[sys.argv.index("--check-output") + 1]
+            with open(output, "w", encoding="utf-8") as stream:
+                json.dump(result, stream, indent=2)
+        elif sys.stdout:
+            print(json.dumps(result, indent=2))
+        return
     if INPUT_HELPER_ARG in sys.argv[1:]:
         # macOS helper process respawned by InputGuard: run the pynput
         # listeners on this process's main thread and report events on
@@ -260,12 +309,54 @@ def main() -> None:
         return
     _setup_stdio()
     sys.excepthook = _report_crash
+    # exe path shows whether macOS runs the app translocated (read-only
+    # quarantine copy), which matters when debugging permission grants
+    log_debug(f"launcher start: frozen={getattr(sys, 'frozen', False)} "
+              f"exe={sys.executable} data={HERE}")
     from laptop_guard import (CONFIG_FILE, GuardConfig, LaptopGuard,
                               load_config, save_config)
     from guard_setup import SettingsForm
 
+    if "--test" in sys.argv:
+        from guard_runtime.diagnostics import show
+        root = tk.Tk()
+        status = tk.Label(root, text="Comprobando componentes…")
+        status.pack(padx=25, pady=20)
+        if _ensure_deps(status):
+            show(root, load_config())
+        else:
+            _safe_destroy(root)
+        return
+
+    if any(mode in sys.argv for mode in ("--watch", "--auto-settings", "--activate-idle")):
+        if sys.platform != "win32":
+            raise RuntimeError("Automatic idle activation is currently Windows-only")
+        from guard_runtime.auto_guard import AutoWatcher, controls, eligible
+        from guard_runtime.idle import WindowsIdle
+        from guard_runtime.storage import RuntimePaths
+        if "--activate-idle" in sys.argv:
+            paths, detector = RuntimePaths(), WindowsIdle()
+            if not os.path.exists(CONFIG_FILE) or not eligible(paths, detector):
+                return
+            root = tk.Tk()
+            root.withdraw()
+            try:
+                failure = LaptopGuard(load_config(), root=root).activate(
+                    activation_reason="idle", can_activate=lambda: eligible(paths, detector))
+                if failure:
+                    log_debug(f"automatic activation failed: {failure}")
+            finally:
+                _safe_destroy(root)
+            return
+        root = tk.Tk()
+        if "--auto-settings" in sys.argv:
+            controls(root)
+        else:
+            AutoWatcher(root).run()
+        return
+
     root = tk.Tk()
-    root.title("Laptop Guard")
+    root.title(f"Laptop Guard {VERSION}")
     root.resizable(False, False)
     root.protocol("WM_DELETE_WINDOW", root.quit)   # closing never activates
     root.report_callback_exception = _report_crash  # button callbacks too
@@ -282,11 +373,21 @@ def main() -> None:
         _safe_destroy(root)
         return
 
-    go = {"activate": False}
+    go = {"activate": False, "test": False, "automatic": False}
     ui = {"cancelled": False}        # countdown stopped (e.g. in Settings)
 
     def _activate() -> None:
         go["activate"] = True
+        root.quit()
+
+    def _test() -> None:
+        ui["cancelled"] = True
+        go["test"] = True
+        root.quit()
+
+    def _automatic() -> None:
+        ui["cancelled"] = True
+        go["automatic"] = True
         root.quit()
 
     def _clear() -> None:
@@ -334,6 +435,7 @@ def main() -> None:
                   command=_use_defaults).pack(side="left", padx=6)
         tk.Button(btns, text="Customize...",
                   width=14, command=_show_form).pack(side="left", padx=6)
+        tk.Button(root, text="Probar sin bloquear", command=_test).pack(pady=(0, 12))
 
     def _countdown() -> None:
         _clear()
@@ -345,6 +447,9 @@ def main() -> None:
                   command=_activate).pack(side="left", padx=6)
         tk.Button(btns, text="Settings", width=12,
                   command=_show_form).pack(side="left", padx=6)
+        tk.Button(root, text="Probar sin bloquear", command=_test).pack(pady=(0, 12))
+        if sys.platform == "win32":
+            tk.Button(root, text="Automático (15 minutos)", command=_automatic).pack(pady=(0, 12))
 
         remaining = {"n": _COUNTDOWN_SEC}
 
@@ -368,6 +473,15 @@ def main() -> None:
         _first_run()
 
     root.mainloop()
+    if go["automatic"]:
+        from guard_runtime.auto_guard import controls
+        _clear()
+        controls(root)
+        return
+    if go["test"]:
+        from guard_runtime.diagnostics import show
+        show(root, load_config())
+        return
     if not go["activate"]:
         _safe_destroy(root)
         return

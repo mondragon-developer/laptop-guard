@@ -6,6 +6,11 @@
 # Build with:  pyinstaller laptop_guard.spec --clean --noconfirm
 import os
 import sys
+from pathlib import Path
+
+version_scope = {}
+exec((Path(SPECPATH) / "guard_runtime" / "version.py").read_text(), version_scope)
+version = version_scope["VERSION"]
 
 # Optional branding: bundled when present next to this spec.
 datas = []
@@ -21,7 +26,7 @@ a = Analysis(
     hiddenimports=[],
     hookspath=[],
     runtime_hooks=[],
-    excludes=[],
+    excludes=["pygame"] if sys.platform == "win32" else [],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
@@ -55,7 +60,10 @@ if sys.platform == "darwin":
         name="LaptopGuard.app",
         icon="icon.icns" if os.path.exists("icon.icns") else None,
         bundle_identifier="com.laptopguard.app",
+        version=version,
         info_plist={
+            "CFBundleShortVersionString": version,
+            "CFBundleVersion": version,
             # Without this string macOS kills the app on camera access.
             "NSCameraUsageDescription":
                 "Laptop Guard records a short webcam clip when someone "
