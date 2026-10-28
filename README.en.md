@@ -36,9 +36,9 @@ Each ZIP contains the application and a short guide. Matching SHA-256 checksums 
 
 ## 🎬 A 15-second walkthrough
 
-[![Illustrated walkthrough: configure, arm, detect activity, record events, and disarm with your chosen combination](demo.gif)](https://github.com/mondragon-developer/laptop-guard/releases/download/v1.1.0/LaptopGuard-1.1.0-demo.mp4)
+[![Illustrated walkthrough: configure, arm, detect activity, record events, and disarm with your chosen combination](demo-en.gif)](https://github.com/mondragon-developer/laptop-guard/releases/download/v1.1.0/LaptopGuard-1.1.0-demo-en.mp4)
 
-**[Watch or download the MP4](https://github.com/mondragon-developer/laptop-guard/releases/download/v1.1.0/LaptopGuard-1.1.0-demo.mp4)** · Silent illustrated walkthrough with fictional data and Spanish labels: Configure → Arm → Detect → Log → Disarm. It does not capture a desktop or people, and it illustrates behavior rather than the exact window design.
+**[Watch or download the MP4](https://github.com/mondragon-developer/laptop-guard/releases/download/v1.1.0/LaptopGuard-1.1.0-demo-en.mp4)** · Silent illustrated walkthrough with fictional data and English labels: Configure → Arm → Detect → Log → Disarm. It does not capture a desktop or people, and it illustrates behavior rather than the exact window design.
 
 ## 🚀 Getting started
 
@@ -132,7 +132,7 @@ release/                       Guides and release notes
 docs/                          Documentation and visual assets
 ```
 
-Generate the illustrated demo with `python tools/render_readme_demo.py`. Pillow and FFmpeg are used only to create presentation media; they are not new application dependencies.
+Generate the English illustrated demo with `python tools/render_readme_demo.py --language en --video LaptopGuard-1.1.0-demo-en.mp4`. Omit `--language en` to render the Spanish version. Pillow and FFmpeg are used only to create presentation media; they are not new application dependencies.
 
 See the [release process](docs/RELEASING.md), [build workflow](.github/workflows/release.yml), and [roadmap](docs/ROADMAP.md).
 
