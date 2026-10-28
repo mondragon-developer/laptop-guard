@@ -41,18 +41,18 @@ def shield(draw, x, y, scale=1, color=CYAN):
     draw.line([(x+19*scale,y+28*scale),(x+31*scale,y+40*scale),(x+52*scale,y+14*scale)], fill=color, width=4)
 
 
-def header():
+def header(english=False):
     image = Image.new('RGB', (WIDTH, 340), BG)
     draw = ImageDraw.Draw(image)
     draw.rectangle((0,0,WIDTH,5), fill=CYAN)
     shield(draw, 748, 106, 1.5)
     text(draw, (48,40), 'LAPTOP GUARD', 48, TEXT, True)
-    text(draw, (50,113), 'Alarma local. Actividad registrada.', 27, CYAN)
-    text(draw, (50,151), 'Tus videos se quedan en tu computador.', 23, MUTED)
+    text(draw, (50,113), 'Local alarm. Activity recorded.' if english else 'Alarma local. Actividad registrada.', 27, CYAN)
+    text(draw, (50,151), 'Your videos stay on your computer.' if english else 'Tus videos se quedan en tu computador.', 23, MUTED)
     pill(draw, (50,220,245,262), 'WINDOWS + macOS')
-    pill(draw, (264,220,467,262), 'SIN INSTALAR PYTHON', GREEN)
-    pill(draw, (486,220,674,262), 'v1.1.0 PRELIMINAR', AMBER)
-    text(draw, (50,292), 'ALERTA  /  REGISTRO LOCAL  /  3 VIDEOS ROTATIVOS', 16, MUTED, True)
+    pill(draw, (264,220,467,262), 'NO PYTHON REQUIRED' if english else 'SIN INSTALAR PYTHON', GREEN)
+    pill(draw, (486,220,674,262), 'v1.1.0 PRE-RELEASE' if english else 'v1.1.0 PRELIMINAR', AMBER)
+    text(draw, (50,292), 'ALERTS  /  LOCAL LOGS  /  3 ROTATING CLIPS' if english else 'ALERTA  /  REGISTRO LOCAL  /  3 VIDEOS ROTATIVOS', 16, MUTED, True)
     return image
 
 
@@ -126,6 +126,7 @@ def main():
     assets = ROOT / 'docs' / 'assets'
     assets.mkdir(parents=True, exist_ok=True)
     header().save(assets / 'hero.png')
+    header(english=True).save(assets / 'hero-en.png')
     frames = [frame(stage, index/17) for stage in range(5) for index in range(18)]
     gif_frames = [item.quantize(colors=96) for item in frames]
     gif_frames[0].save(ROOT / 'demo.gif', save_all=True, append_images=gif_frames[1:],

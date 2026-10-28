@@ -2,6 +2,8 @@
   <img src="docs/assets/hero.png" alt="Laptop Guard — alarma local para Windows y macOS; versión 1.1.0 preliminar" width="960">
 </p>
 
+<p align="center"><strong>Español</strong> · <a href="README.en.md">English</a></p>
+
 <p align="center">
   <a href="https://github.com/mondragon-developer/laptop-guard/releases/tag/v1.1.0"><strong>Descargar</strong></a>
   &nbsp; · &nbsp;
