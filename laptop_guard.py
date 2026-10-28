@@ -35,34 +35,17 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from guard_runtime.storage import RuntimePaths, InstanceLock, app_dir
+from guard_runtime.audit import AuditLog
+from guard_runtime.system_events import SystemEvents
+from guard_runtime.video import WebcamRecorder
+
 
 # ──────────────────────────────────────────────
 # 1. CONFIGURATION  (Single Responsibility)
 # ──────────────────────────────────────────────
-def app_dir() -> str:
-    """Folder that holds the app's data files (config, log, webcam clip).
-
-    In a frozen (PyInstaller) build, __file__ points inside a temporary
-    extraction folder that is deleted on exit, so the executable's own
-    folder is used instead - settings survive across runs there.
-
-    Exception: on frozen macOS the executable lives inside the .app
-    bundle, and an unsigned app downloaded from the internet runs from a
-    read-only translocated path, so data files go to the standard
-    per-user Application Support folder instead.
-    """
-    if getattr(sys, "frozen", False):
-        if sys.platform == "darwin":
-            path = os.path.expanduser(
-                "~/Library/Application Support/LaptopGuard")
-            os.makedirs(path, exist_ok=True)
-            return path
-        return os.path.dirname(os.path.abspath(sys.executable))
-    return os.path.dirname(os.path.abspath(__file__))
-
-
 CONFIG_FILE = os.path.join(app_dir(), "guard_config.json")
-DEBUG_LOG = os.path.join(app_dir(), "guard_debug.log")
+DEBUG_LOG = str(RuntimePaths().logs / "guard_debug.log")
 
 
 def log_debug(msg: str) -> None:
@@ -70,6 +53,7 @@ def log_debug(msg: str) -> None:
     unless stderr already is that file (frozen builds redirect it)."""
     line = f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {msg}"
     try:
+        os.makedirs(os.path.dirname(DEBUG_LOG), exist_ok=True)
         with open(DEBUG_LOG, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
     except OSError:
@@ -95,9 +79,7 @@ class GuardConfig:
     phone: str = "555-0100"          # placeholder - set your own in Settings
     message: str = ""                  # built from phone when left empty
     alarm_duration_sec: int = 90       # how long the alarm plays
-    log_file: str = "guard.log"        # intrusion attempt log
     record_seconds: int = 5            # webcam clip length; 0 disables recording
-    clip_file: str = "intruder.mp4"    # webcam clip output
 
     def __post_init__(self) -> None:
         if not self.message:
@@ -191,11 +173,15 @@ class PygameAlarm(AlarmPlayer):
         import pygame  # noqa - deferred so import errors surface at use-time
         self._pygame = pygame
         self._sound = None     # MUST keep a reference (see play())
+        self._fallback = None
+        self._stop = threading.Event()
         if not pygame.mixer.get_init():
             pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
 
     def play(self, duration_sec: int) -> None:
         try:
+            if self._stop.is_set():
+                return
             import numpy as np
             sr = 44_100
             freq = 800  # Hz - harsh alarm tone
@@ -207,19 +193,26 @@ class PygameAlarm(AlarmPlayer):
             # as the Sound object is garbage-collected, which is exactly
             # what made the alarm "sound once and stop" before.
             self._sound = self._pygame.mixer.Sound(buffer=wave.tobytes())
+            if self._stop.is_set():
+                return
             # loops counts REPEATS after the first play, hence the -1
             self._sound.play(loops=max(0, duration_sec - 1))  # 1 s per loop
         except Exception as exc:
             # never leave the guard silent: degrade to the winsound beeper
             print(f"  [Guard] pygame alarm failed: {exc}", file=sys.stderr)
             try:
-                WinsoundAlarm().play(duration_sec)
+                self._fallback = WinsoundAlarm()
+                if not self._stop.is_set():
+                    self._fallback.play(duration_sec)
             except Exception as exc2:
                 print(f"  [Guard] winsound fallback failed: {exc2}",
                       file=sys.stderr)
 
     def stop(self) -> None:
         try:
+            self._stop.set()
+            if self._fallback:
+                self._fallback.stop()
             if self._sound is not None:
                 self._sound.stop()
                 self._sound = None
@@ -229,17 +222,18 @@ class PygameAlarm(AlarmPlayer):
 
 
 class WinsoundAlarm(AlarmPlayer):
-    """Pure-stdlib fallback (Windows only)."""
+    """Windows alarm, without an additional audio library."""
 
     def __init__(self) -> None:
         self._stop = threading.Event()
 
     def play(self, duration_sec: int) -> None:
         import winsound
-        self._stop.clear()
-        end = time.time() + duration_sec
-        while time.time() < end and not self._stop.is_set():
+        end = time.monotonic() + duration_sec
+        while time.monotonic() < end and not self._stop.is_set():
             winsound.Beep(800, 150)
+            if self._stop.is_set() or time.monotonic() >= end:
+                break
             winsound.Beep(1200, 150)
 
     def stop(self) -> None:
@@ -255,33 +249,21 @@ class _SilentAlarm(AlarmPlayer):
 
 def _make_alarm() -> AlarmPlayer:
     """Factory - Dependency Inversion: caller gets an abstraction."""
+    if platform.system().lower() == "windows":
+        return WinsoundAlarm()
     try:
         return PygameAlarm()
     except Exception as exc:
-        if platform.system().lower() != "windows":
-            # winsound does not exist outside Windows; without pygame
-            # there is no alarm, but the rest of the guard keeps working
-            print(f"  [Guard] pygame unavailable ({exc}); alarm disabled",
-                  file=sys.stderr)
-            return _SilentAlarm()
-        print(f"  [Guard] pygame unavailable ({exc}); using winsound fallback",
+        print(f"  [Guard] pygame unavailable ({exc}); alarm disabled",
               file=sys.stderr)
-        return WinsoundAlarm()
+        return _SilentAlarm()
 
 
 # ──────────────────────────────────────────────
 # 3. FAKE SCREEN  (Single Responsibility)
 # ──────────────────────────────────────────────
 class FakeScreen:
-    """Full-screen black tkinter window with the warning text.
-
-    Pass the application's existing Tk root when there is one. Tk Aqua
-    remembers the first interpreter created in a process and keeps using
-    it after it is destroyed, so destroying that root and creating a
-    second one crashes on macOS (Tk ticket c18c36f8, cpython issue
-    123204). A shared root is shown full screen and withdrawn again on
-    deactivation; without one, show() owns a root of its own.
-    """
+    """One warning per Windows monitor; reuse the existing Tk interpreter."""
 
     def __init__(self, config: GuardConfig,
                  root: Optional[tk.Tk] = None) -> None:
@@ -289,58 +271,94 @@ class FakeScreen:
         self._root = root
         self._deactivate_evt = threading.Event()   # thread-safe signal
 
-    def show(self) -> None:
-        """Runs the tkinter mainloop; blocks until deactivate() is called.
-
-        MUST be called on the main thread - Tk on macOS (Cocoa) rejects
-        windows created on background threads.
-        """
-        self._deactivate_evt.clear()
+    def show(self, should_close=None, preview_seconds=None) -> None:
+        """Main thread only. Preview permits Esc/click and always times out."""
+        from guard_runtime.displays import enable_dpi_awareness, monitors, place
         shared = self._root is not None
+        root = None
+        windows = {}
+        poll_id = None
+        failure = []
+        deadline = (time.monotonic() + preview_seconds
+                    if preview_seconds is not None else None)
+
+        def closing():
+            return (self._deactivate_evt.is_set()
+                    or (should_close and should_close())
+                    or (deadline is not None and time.monotonic() >= deadline))
+
+        def reconcile():
+            attached = monitors(root)
+            # Cover newly attached displays before removing obsolete windows.
+            for display in attached:
+                if display not in windows:
+                    window = tk.Toplevel(root)
+                    windows[display] = window
+                    window.withdraw()
+                    window.title("Laptop Guard — prueba" if deadline is not None else "System Alert")
+                    window.configure(bg="black")
+                    if sys.platform == "win32":
+                        window.overrideredirect(True)
+                    window.attributes("-topmost", True)
+                    window.protocol("WM_DELETE_WINDOW", self.deactivate if deadline is not None else lambda: None)
+                    if deadline is not None:
+                        tk.Button(window, text="PRUEBA — Cerrar (Esc)",
+                                  command=self.deactivate).pack(pady=20)
+                        window.bind("<Escape>", lambda event: self.deactivate())
+                    tk.Label(window, text=self._config.message, fg="red", bg="black",
+                             font=("Arial", 22, "bold"),
+                             wraplength=max(100, display.width - 80),
+                             justify="center").pack(expand=True)
+                    window.deiconify()
+                    place(window, display)
+                    window.lift()
+                    if deadline is not None:
+                        window.focus_force()
+            for display in tuple(windows):
+                if display not in attached:
+                    windows.pop(display).destroy()
+
+        last_scan = 0
+
+        def poll():
+            nonlocal poll_id, last_scan
+            poll_id = None
+            try:
+                if closing():
+                    root.quit()
+                    return
+                now = time.monotonic()
+                if now - last_scan >= 1:
+                    reconcile()
+                    last_scan = now
+            except Exception as exc:
+                failure.append(exc)
+                root.quit()
+                return
+            poll_id = root.after(100, poll)
 
         try:
+            if closing():
+                return
+            if not shared:
+                enable_dpi_awareness()
             root = self._root if shared else tk.Tk()
-            if shared:
-                for widget in root.winfo_children():
-                    widget.destroy()
-                root.resizable(True, True)
-                root.deiconify()
-            root.title("System Alert")
-            root.attributes("-fullscreen", True)
-            root.configure(bg="black")
-            root.attributes("-topmost", True)
-            root.lift()
+            root.withdraw()
+            reconcile()
+            last_scan = time.monotonic()
             _bring_app_forward()
-
-            tk.Label(
-                root, text=self._config.message,
-                fg="red", bg="black",
-                font=("Arial", 22, "bold"),
-                wraplength=900, justify="center",
-            ).pack(expand=True)
-
-            root.protocol("WM_DELETE_WINDOW", lambda: None)  # block × button
-
-            def _close() -> None:
+            poll_id = root.after(100, poll)
+            root.mainloop()
+            if failure:
+                raise failure[0]
+        finally:
+            if root is not None:
+                if poll_id is not None:
+                    root.after_cancel(poll_id)
+                for window in windows.values():
+                    window.destroy()
                 if not shared:
                     root.destroy()
-                    return
-                root.attributes("-fullscreen", False)
-                root.attributes("-topmost", False)
-                root.withdraw()
-                root.quit()
-
-            def _poll() -> None:
-                if self._deactivate_evt.is_set():
-                    _close()
-                    return
-                root.after(100, _poll)          # check every 100 ms
-
-            root.after(100, _poll)
-            root.mainloop()                     # blocks here
-        except Exception as exc:
-            # a screen failure must never abort activate()'s main thread
-            print(f"  [Guard] warning screen failed: {exc}", file=sys.stderr)
 
     def deactivate(self) -> None:
         """Thread-safe: signal the tkinter loop to close."""
@@ -373,59 +391,18 @@ class PowerManager(ABC):
 
 
 class WindowsPowerManager(PowerManager):
-    """Prevents sleep / hibernate via powercfg (Windows).
+    """Prevent automatic sleep for this thread without changing the power plan.
 
-    The previous standby timeouts are captured on prevent and put back on
-    restore, so the user's power plan is left exactly as it was found.
+    Explicit sleep, shutdown and restart remain controlled by Windows.
     """
-
-    _SUB_SLEEP   = "238c9fa8-0aad-41ed-83f4-97be242c8dc2"  # Sleep subgroup
-    _STANDBYIDLE = "29f6c1db-86da-48dc-9fcb-f6d1e0da6a9f"  # "Sleep after" setting
-
-    def __init__(self) -> None:
-        import re
-        import subprocess
-        self._re = re
-        self._sp = subprocess
-        self._saved: Optional[tuple[int, int]] = None   # (ac, dc) seconds
-
-    # ---- helpers ---------------------------------------------------------
-    def _run(self, args: list[str]) -> str:
-        try:
-            res = self._sp.run(["powercfg", *args],
-                               capture_output=True, text=True, check=False)
-            return res.stdout or ""
-        except OSError as exc:
-            print(f"  [Guard] powercfg failed: {exc}", file=sys.stderr)
-            return ""
-
-    def _current_timeouts(self) -> Optional[tuple[int, int]]:
-        out = self._run(["/query", "SCHEME_CURRENT",
-                         self._SUB_SLEEP, self._STANDBYIDLE])
-        pairs = self._re.findall(
-            r"Current (AC|DC) Power Setting Index:\s*0x([0-9a-fA-F]+)", out)
-        vals = {src.lower(): int(hexv, 16) for src, hexv in pairs}
-        if "ac" in vals and "dc" in vals:
-            return vals["ac"], vals["dc"]
-        return None
-
-    # ---- interface -------------------------------------------------------
     def prevent_shutdown(self) -> None:
-        self._saved = self._current_timeouts()
-        for source in ("ac", "dc"):
-            # value index for STANDBYIDLE is in seconds; 0 = never
-            self._run([f"/set{source}valueindex", "SCHEME_CURRENT",
-                       self._SUB_SLEEP, self._STANDBYIDLE, "0"])
+        import ctypes
+        if not ctypes.windll.kernel32.SetThreadExecutionState(0x80000001):
+            log_debug("Could not prevent automatic sleep")
 
     def restore(self) -> None:
-        if self._saved is None:
-            return
-        ac, dc = self._saved
-        self._run(["/setacvalueindex", "SCHEME_CURRENT",
-                   self._SUB_SLEEP, self._STANDBYIDLE, str(ac)])
-        self._run(["/setdcvalueindex", "SCHEME_CURRENT",
-                   self._SUB_SLEEP, self._STANDBYIDLE, str(dc)])
-        self._saved = None
+        import ctypes
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)
 
 
 class NoopPowerManager(PowerManager):
@@ -439,79 +416,6 @@ def _make_power() -> PowerManager:
     if platform.system().lower() == "windows":
         return WindowsPowerManager()
     return NoopPowerManager()
-
-
-# ──────────────────────────────────────────────
-# 5. WEBCAM RECORDER  (Single Responsibility)
-# ──────────────────────────────────────────────
-class WebcamRecorder:
-    """Records a short webcam clip when the alarm triggers.
-
-    Requires opencv-python; degrades gracefully (warning on stderr) when the
-    package or a camera is not available. Designed to run on a daemon thread.
-    """
-
-    def __init__(self, config: GuardConfig) -> None:
-        self._config = config
-
-    def record(self) -> None:
-        secs = self._config.record_seconds
-        if secs <= 0:
-            return
-        try:
-            import cv2
-        except ImportError:
-            print("  [Guard] opencv-python not installed; skipping webcam clip",
-                  file=sys.stderr)
-            return
-
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            print("  [Guard] no webcam available; skipping clip", file=sys.stderr)
-            cap.release()
-            return
-
-        try:
-            fps = cap.get(cv2.CAP_PROP_FPS) or 20.0
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 640
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 480
-
-            writer = self._open_writer(cv2, self._config.clip_file,
-                                       fps, width, height)
-            if writer is None:
-                return
-
-            deadline = time.time() + secs
-            while time.time() < deadline:
-                ok, frame = cap.read()
-                if ok:
-                    writer.write(frame)
-                else:
-                    time.sleep(0.01)
-            writer.release()
-            print(f"  [Guard] webcam clip saved to {self._config.clip_file}")
-        except Exception as exc:
-            print(f"  [Guard] webcam recording failed: {exc}", file=sys.stderr)
-        finally:
-            cap.release()
-
-    @staticmethod
-    def _open_writer(cv2, path: str, fps: float,
-                     width: int, height: int):
-        """Try mp4v first, fall back to XVID/avi if the codec is missing."""
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(path, fourcc, fps, (width, height))
-        if writer.isOpened():
-            return writer
-        writer.release()
-        alt = path.rsplit(".", 1)[0] + ".avi"
-        writer = cv2.VideoWriter(alt, cv2.VideoWriter_fourcc(*"XVID"),
-                                 fps, (width, height))
-        if writer.isOpened():
-            return writer
-        writer.release()
-        print("  [Guard] could not open a video writer", file=sys.stderr)
-        return None
 
 
 # ──────────────────────────────────────────────
@@ -535,6 +439,11 @@ class InputGuard:
         self._active = True
         self._expected = {k.lower() for k in config.key_combo}
         self._pressed: set[str] = set()
+        self._event_lock = threading.RLock()
+        self._listeners = []
+        self._move_count = 0
+        self._move_started = None
+        self._last_move_log = 0.0
         # why the input watcher gave up, once it has (e.g. "accessibility")
         self.failure: Optional[str] = None
 
@@ -544,6 +453,8 @@ class InputGuard:
         """Normalize pynput keys: 'ctrl_l'->'ctrl', KeyCode 'z'->'z'."""
         if hasattr(key, "name") and key.name:
             s = key.name.lower()
+        elif getattr(key, "char", None) is not None:
+            s = key.char.lower()
         else:
             s = str(key).lower().strip("'\"")
         s = s.replace("key.", "")
@@ -558,6 +469,10 @@ class InputGuard:
 
     # ---- event handlers (shared by the in-process and helper paths) ------
     def _handle_press(self, kn: str) -> None:
+        with self._event_lock:
+            self._press(kn)
+
+    def _press(self, kn: str) -> None:
         if not self._active:
             return
         self._pressed.add(kn)
@@ -570,22 +485,48 @@ class InputGuard:
         if not self._triggered.is_set():            # first intrusion → alarm
             self._triggered.set()
             self._on_unauth()
-        self._on_attempt(f"key:{kn}")
+        # Record activity, never typed characters or the secret combination.
+        self._on_attempt("key:press")
+        if kn == "f4" and "alt" in self._pressed:
+            self._on_attempt("shortcut:alt+f4")
 
     def _handle_release(self, kn: str) -> None:
-        self._pressed.discard(kn)
+        with self._event_lock:
+            self._pressed.discard(kn)
 
     def _handle_mouse(self, kind: str) -> None:
+        with self._event_lock:
+            self._mouse(kind)
+
+    def _mouse(self, kind: str) -> None:
         if not self._active:
             return
         if not self._triggered.is_set():
             self._triggered.set()
             self._on_unauth()
+        if kind == "move":
+            self._move_count += 1
+            if self._move_started is None:
+                from guard_runtime.audit import timestamp
+                self._move_started = timestamp()
+            if time.monotonic() - self._last_move_log >= 1:
+                self._flush_moves()
+        else:
             self._on_attempt(f"mouse:{kind}")
-        elif kind == "click":
-            # clicks are logged even after the trigger; moves are not,
-            # so a moving mouse cannot flood the log file
-            self._on_attempt("mouse:click")
+
+    def _flush_moves(self):
+        if self._move_count:
+            self._on_attempt(f"mouse:move:{self._move_count}:{self._move_started}")
+            self._move_count = 0
+            self._move_started = None
+            self._last_move_log = time.monotonic()
+
+    def stop(self):
+        with self._event_lock:
+            self._active = False
+            self._flush_moves()
+        for listener in self._listeners:
+            listener.stop()
 
     # ---- public ----------------------------------------------------------
     @property
@@ -599,10 +540,19 @@ class InputGuard:
 
     def start(self) -> None:
         """Runs in its own thread. Blocks until deactivated."""
-        if sys.platform == "darwin":
-            self._start_helper()
-        else:
-            self._start_pynput()
+        try:
+            if sys.platform == "darwin":
+                self._start_helper()
+            else:
+                self._start_pynput()
+        except Exception as exc:
+            self.failure = str(exc)
+            log_debug(f"input watcher failed: {exc}")
+        finally:
+            was_active = self._active
+            self.stop()
+            if was_active or self.failure:
+                self._on_deact()
 
     # ---- platform implementations -----------------------------------------
     def _start_helper(self) -> None:
@@ -679,25 +629,38 @@ class InputGuard:
             if pressed_flag:
                 self._handle_mouse("click")
 
+        def on_scroll(x, y, dx, dy):
+            self._handle_mouse("scroll")
+
         # suppress=True blocks input from reaching the OS; fall back to
         # passive listeners on platforms where suppression is unsupported
         try:
             k_list = keyboard.Listener(on_press=on_press,
                                        on_release=on_release, suppress=True)
             m_list = mouse.Listener(on_move=on_move,
-                                    on_click=on_click, suppress=True)
+                                    on_click=on_click, on_scroll=on_scroll, suppress=True)
+            self._listeners = [k_list, m_list]
             k_list.start()
             m_list.start()
         except Exception as exc:
+            for listener in self._listeners:
+                listener.stop()
+            self._on_attempt("input:passive_fallback")
             print(f"  [Guard] input suppression unavailable ({exc}); "
                   "falling back to passive listening", file=sys.stderr)
             k_list = keyboard.Listener(on_press=on_press, on_release=on_release)
-            m_list = mouse.Listener(on_move=on_move, on_click=on_click)
+            m_list = mouse.Listener(on_move=on_move, on_click=on_click, on_scroll=on_scroll)
+            self._listeners = [k_list, m_list]
             k_list.start()
             m_list.start()
 
         # Keep this thread alive while guard is active
         while self._active:
+            if not k_list.is_alive() or not m_list.is_alive():
+                raise RuntimeError("Input listener stopped unexpectedly")
+            with self._event_lock:
+                if time.monotonic() - self._last_move_log >= 1:
+                    self._flush_moves()
             time.sleep(0.2)
 
         k_list.stop()
@@ -764,6 +727,9 @@ def input_helper_main() -> None:
         if is_pressed:
             _emit("mouse:click")
 
+    def on_scroll(x, y, dx, dy):
+        _emit("mouse:scroll")
+
     def _launch(suppress: bool) -> str:
         """Run the listeners until the keyboard listener returns.
 
@@ -773,7 +739,7 @@ def input_helper_main() -> None:
         cause for the parent.
         """
         m_list = mouse.Listener(on_move=on_move, on_click=on_click,
-                                suppress=suppress)
+                                on_scroll=on_scroll, suppress=suppress)
         k_list = keyboard.Listener(on_press=on_press,
                                    on_release=on_release, suppress=suppress)
         m_list.start()
@@ -808,12 +774,20 @@ class LaptopGuard:
     """Single entry-point that wires everything together."""
 
     def __init__(self, config: Optional[GuardConfig] = None,
-                 root: Optional[tk.Tk] = None) -> None:
+                 root: Optional[tk.Tk] = None, *, paths=None,
+                 alarm=None, screen=None, power=None, recorder=None,
+                 audit=None, system_events=None) -> None:
         self.config = config or GuardConfig()
-        self._alarm: AlarmPlayer = _make_alarm()
-        self._screen = FakeScreen(self.config, root)
-        self._power: PowerManager = _make_power()
-        self._recorder = WebcamRecorder(self.config)
+        self.paths = paths or RuntimePaths()
+        self._audit = audit or AuditLog(self.paths)
+        self._alarm: AlarmPlayer = alarm or _make_alarm()
+        self._screen = screen or FakeScreen(self.config, root)
+        self._power: PowerManager = power or _make_power()
+        self._recorder = recorder or WebcamRecorder(self.config, self.paths, self._audit)
+        self._system = system_events or SystemEvents(self.paths, self._audit)
+        self._media_threads = []
+        self._input = None
+        self._unlocked = False
 
     # ---- callbacks (called from InputGuard / pynput threads) -------------
     def _on_unauthorized(self) -> None:
@@ -823,27 +797,38 @@ class LaptopGuard:
         # which is what killed the combo detection.
         # Note: the warning screen is intentionally NOT started here;
         # activate() runs it on the MAIN thread (Tk/Cocoa requirement).
-        threading.Thread(
+        self._audit.emit("alarm_triggered")
+        alarm_thread = threading.Thread(
             target=self._alarm.play,
             args=(self.config.alarm_duration_sec,),
+            name="guard-alarm",
             daemon=True,
-        ).start()
-        threading.Thread(target=self._recorder.record, daemon=True).start()
+        )
+        video_thread = threading.Thread(target=self._recorder.record,
+                                        name="guard-video", daemon=True)
+        self._media_threads = [alarm_thread, video_thread]
+        alarm_thread.start()
+        video_thread.start()
 
     def _on_deactivate(self) -> None:
+        if self._input and self._input.failure:
+            self._audit.emit("input_watcher_failed", error=self._input.failure)
+        else:
+            self._unlocked = True
+            self._audit.emit("guard_unlocked", method="key_combination")
         self._screen.deactivate()    # thread-safe → closes tkinter window
         self._alarm.stop()
 
     def _log_attempt(self, source: str) -> None:
-        try:
-            stamp = time.strftime("%Y-%m-%d %H:%M:%S")
-            with open(self.config.log_file, "a", encoding="utf-8") as fh:
-                fh.write(f"{stamp}  unauthorized input: {source}\n")
-        except OSError as exc:
-            print(f"  [Guard] log write failed: {exc}", file=sys.stderr)
+        if source.startswith("mouse:move:"):
+            _, _, count, started = source.split(":", 3)
+            self._audit.emit("input_attempt", source="mouse:move", count=int(count),
+                             first_observed_at=started)
+        else:
+            self._audit.emit("input_attempt", source=source, count=1)
 
     # ---- public API ------------------------------------------------------
-    def activate(self) -> Optional[str]:
+    def activate(self, activation_reason="manual", can_activate=None) -> Optional[str]:
         """Block until the guard is deactivated.
 
         Returns None after a normal deactivation, or a short reason
@@ -854,31 +839,64 @@ class LaptopGuard:
         # first trigger, and an "intruder" could just read the way out.
         print("\n  [Guard] ACTIVE - keyboard and mouse are blocked.\n")
 
-        self._power.prevent_shutdown()
-
         guard = InputGuard(
             config=self.config,
             on_unauthorized=self._on_unauthorized,
             on_deactivate=self._on_deactivate,
             on_attempt=self._log_attempt,
         )
+        self._input = guard
         worker = threading.Thread(target=guard.start, daemon=True)
-        worker.start()
+        self.paths.ensure()
+        instance = InstanceLock(self.paths.logs / "guard.lock")
+        instance.acquire()
+        reason = "error"
 
         # Main thread: wait for the first intrusion, then run the warning
         # screen HERE. Tk on macOS (Cocoa) only works on the main thread,
         # and it is equally happy there on Windows - so show() must not
         # run on a listener or daemon thread.
         try:
+            self._audit.start()
+            self._system.start()
+            if can_activate is not None and not can_activate():
+                reason = "activation_cancelled"
+                self._audit.emit("activation_cancelled", reason="activity_or_pause")
+                return None
+            self._power.prevent_shutdown()
+            self._audit.emit("guard_activated", reason=activation_reason)
+            self._audit.flush()
+            worker.start()
             while guard.is_active and not guard.triggered.is_set():
+                if self._audit.error:
+                    raise OSError(str(self._audit.error))
                 time.sleep(0.2)
             if guard.is_active:
-                self._screen.show()     # blocks until _on_deactivate()
+                self._screen.show(should_close=lambda: not guard.is_active or bool(self._audit.error))
+            if self._audit.error:
+                raise OSError(str(self._audit.error))
+            reason = "input_failure" if guard.failure else ("key_combination" if self._unlocked else "screen_closed")
         except KeyboardInterrupt:
-            pass
-
-        self._alarm.stop()
-        self._power.restore()
+            reason = "keyboard_interrupt"
+        finally:
+            guard.stop()
+            self._screen.deactivate()
+            if worker.ident:
+                worker.join(timeout=6)
+            self._alarm.stop()
+            for thread in self._media_threads:
+                timeout = max(self.config.record_seconds, 0) + 5 if thread.name == "guard-video" else 2
+                thread.join(timeout=timeout)
+                if thread.is_alive():
+                    self._audit.emit("media_stop_timeout", thread=thread.name)
+            self._recorder.stop()
+            self._alarm.stop()
+            self._power.restore()
+            self._system.stop()
+            try:
+                self._audit.close(reason)
+            finally:
+                instance.release()
         if guard.failure:
             print(f"  [Guard] DEACTIVATED - input watcher failed "
                   f"({guard.failure}); see {DEBUG_LOG}\n", file=sys.stderr)

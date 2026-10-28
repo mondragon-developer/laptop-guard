@@ -1,7 +1,9 @@
 LAPTOP GUARD - macOS
 =====================
+Version 1.1.0 — macOS 15 or newer. No Python needed.
+Choose the ZIP matching About This Mac: Apple Silicon or Intel.
 
-1. Unzip this folder anywhere you like and keep the files together.
+1. Unzip the download and move LaptopGuard.app to Applications.
 
 2. The app is not signed with an Apple Developer certificate, so the
    FIRST launch needs one extra step:
@@ -22,11 +24,14 @@ LAPTOP GUARD - macOS
    Privacy & Security -> Accessibility) and turn on LaptopGuard. The app
    continues on its own; no need to quit and reopen.
 
-   After installing a NEW VERSION the old entry still shows as enabled
-   but no longer counts (macOS ties the permission to the exact app
-   file). If the app stays on the "Permission needed" window or tells
-   you it stopped, select LaptopGuard in the Accessibility list, press
-   the "-" button, reopen the app and accept the request again.
+   After installing a NEW VERSION the old entry still shows in the
+   list and can even be switched on, but it no longer counts: macOS
+   ties the permission to the exact app file, so the switch on a stale
+   entry does nothing. If the app stays on the "Permission needed"
+   window, select LaptopGuard in the Accessibility list, press the "-"
+   button, then reopen the app and accept the fresh request. Still
+   stuck? Run this in Terminal and reopen the app:
+       tccutil reset Accessibility com.laptopguard.app
 
 4. Camera: macOS asks for it the first time an intruder triggers the
    guard. It is needed only for the intruder clip.
@@ -38,15 +43,33 @@ LAPTOP GUARD - macOS
 
 6. Walk away. Any key press, click, or mouse movement triggers a
    full-screen warning, a loud alarm, and a short webcam clip of the
-   intruder, and every attempt is written to guard.log.
+   intruder, and every attempt is written to logs/guard.jsonl.
 
 7. Press your secret combo (default Ctrl+Shift+Z) to stop everything.
    If anything ever goes wrong, Cmd+Opt+Esc and force-quit the app.
 
 Files are stored in ~/Library/Application Support/LaptopGuard:
-guard_config.json (your settings), guard.log (intrusion attempts),
-intruder.mp4 (webcam clip) and guard_debug.log (what the app did, for
+guard_config.json (your settings), logs/guard.jsonl (persistent events),
+videos/intruder_1..3.mp4 or .avi (three rotating clips), and
+logs/guard_debug.log (what the app did, for
 troubleshooting - send it along when reporting a problem). In Finder,
 use Go -> Go to Folder and paste that path. (An unsigned app runs from a
 read-only location on macOS, so the files cannot live next to the app
 itself.)
+
+To read the log in Terminal (the quotes matter, the path has a space):
+    cat ~/Library/"Application Support"/LaptopGuard/logs/guard_debug.log
+
+System shutdown/restart journal recovery is currently Windows-only.
+On macOS, an unfinished session is reported as an interruption with
+unknown cause on the next activation.
+
+Safe tests: "Probar sin bloquear" tests the screen, sound or camera
+individually. Escape closes the screen preview. Test videos are temporary.
+Choose Customize to set your OWN contact number and unlock combination;
+saving settings activates the guard. Ctrl means Control, not Command.
+
+This Mac version displays its warning on ONE screen. Automatic activation
+after 15 minutes is currently Windows-only. This is an alarm/overlay, not
+the macOS secure lock screen. The deletion warning is a deterrent message:
+the program does not delete or encrypt files. Recordings stay on this Mac.

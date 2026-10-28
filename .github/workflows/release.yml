@@ -1,73 +1,79 @@
-# Release workflow: pushing a tag like v1.0.0 builds the Windows .exe
-# and the macOS .app with PyInstaller and attaches both zips to a new
-# GitHub Release.
-name: Release
+name: Release packages
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: ['release/**']
+    tags: ['v*']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            target: windows-x64
+            architecture: x64
+          - runner: macos-15
+            target: macos-apple-silicon
+            architecture: arm64
+          - runner: macos-15-intel
+            target: macos-intel
+            architecture: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.12'
+          architecture: ${{ matrix.architecture }}
+          cache: pip
       - name: Install dependencies
-        run: pip install -r requirements.txt pyinstaller
-      - name: Build executable
-        run: pyinstaller laptop_guard.spec --clean --noconfirm
-      - name: Package zip
-        shell: pwsh
-        run: |
-          Copy-Item release/READ-ME-FIRST-windows.txt dist/READ-ME-FIRST.txt
-          Compress-Archive -Path dist/LaptopGuard.exe, dist/READ-ME-FIRST.txt -DestinationPath laptop-guard-windows.zip
+        run: python -m pip install -r requirements.txt pyinstaller==6.19.0
+      - name: Test without input hooks or a real camera
+        run: python -m unittest discover -s tests -v
+      - name: Build application
+        run: python -m PyInstaller laptop_guard.spec --clean --noconfirm
+      - name: Check and package isolated application
+        run: python tools/package_release.py --target ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
-          name: laptop-guard-windows
-          path: laptop-guard-windows.zip
+          name: laptop-guard-${{ matrix.target }}
+          path: |
+            release-artifacts/*.zip
+            release-artifacts/*.sha256
+          if-no-files-found: error
+          retention-days: 14
 
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install dependencies
-        run: pip install -r requirements.txt pyinstaller
-      - name: Build app bundle
-        run: pyinstaller laptop_guard.spec --clean --noconfirm
-      - name: Package zip
-        run: |
-          cp release/READ-ME-FIRST-macos.txt dist/READ-ME-FIRST.txt
-          cd dist && zip -ry ../laptop-guard-macos.zip LaptopGuard.app READ-ME-FIRST.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: laptop-guard-macos
-          path: laptop-guard-macos.zip
-
-  release:
-    needs: [build-windows, build-macos]
+  draft:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Create GitHub Release
+          merge-multiple: true
+      - name: Create draft for review
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" \
-            --title "laptop-guard $TAG" \
-            --notes "Download the zip for your OS, unzip, and follow READ-ME-FIRST.txt inside. No Python installation needed. Windows: click 'More info -> Run anyway' on the SmartScreen warning. macOS: on the first launch click Done on the Gatekeeper warning, then System Settings -> Privacy & Security -> Open Anyway; the app then asks for Accessibility and waits until it is turned on (after an update, remove LaptopGuard from the Accessibility list and add it again)." \
-            artifacts/laptop-guard-windows/laptop-guard-windows.zip \
-            artifacts/laptop-guard-macos/laptop-guard-macos.zip
+          gh release create "$TAG" --verify-tag --draft \
+            --title "Laptop Guard $TAG" --notes-file release/RELEASE-NOTES.md \
+            artifacts/*.zip artifacts/*.sha256

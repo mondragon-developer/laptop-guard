@@ -1,12 +1,17 @@
 # Personal settings - contains YOUR phone number and secret combo.
 # Never commit this file; guard_config.example.json is the template.
 guard_config.json
+auto_guard.json
 
 # Runtime artifacts - intrusion log and webcam clips of people.
 guard.log
 guard_debug.log
 intruder.mp4
 intruder.avi
+logs/
+videos/
+*.pending.mp4
+*.pending.avi
 
 # Python
 __pycache__/
@@ -15,4 +20,8 @@ __pycache__/
 # PyInstaller build output
 build/
 dist/
+release-artifacts/
+
+# Original personal voice draft is retained locally, outside public releases.
+prototypes/voice_lock_screen_draft.py
 

@@ -6,6 +6,6 @@
 #              install it with:  brew install python-tk
 
 pynput>=1.7.6          # global keyboard/mouse listening + suppression
-pygame>=2.5            # loud alarm playback (PygameAlarm)
-numpy>=1.24            # alarm tone generation for pygame
+pygame>=2.5; sys_platform != "win32"  # macOS alarm; Windows uses stdlib winsound
+numpy>=1.24            # OpenCV dependency; also generates the macOS alarm
 opencv-python>=4.8     # webcam clip on trigger (WebcamRecorder)

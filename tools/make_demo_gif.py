@@ -2,7 +2,7 @@
 make_demo_gif.py - renders the guard's warning screen and records it as
 demo.gif for the README (no webcam, alarm, or input blocking involved).
 
-Run from the laptop-guard folder:  python make_demo_gif.py
+Run from the laptop-guard folder:  python tools/make_demo_gif.py
 Requires Pillow. The capture grabs the primary monitor while a tkinter
 window replays the real warning message with a typewriter effect.
 """
@@ -17,14 +17,15 @@ import tkinter as tk
 
 from PIL import ImageGrab
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_DIR)
 from laptop_guard import MESSAGE_TEMPLATE  # noqa: E402
 
 FPS = 6
 HOLD_FRAMES = FPS * 2          # hold the full message for 2 s at the end
 CHARS_PER_FRAME = 4
 OUT_WIDTH = 960                # gif width in pixels (keeps file size sane)
-OUT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo.gif")
+OUT_FILE = os.path.join(PROJECT_DIR, "demo.gif")
 
 MESSAGE = MESSAGE_TEMPLATE.format(phone="555-1234567")
 

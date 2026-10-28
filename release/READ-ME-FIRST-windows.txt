@@ -1,14 +1,16 @@
 LAPTOP GUARD - Windows
 =======================
+Version 1.1.0 — Windows 10/11 x64 (Intel/AMD). No Python needed.
 
 1. Unzip this folder anywhere you like (Desktop is fine) and keep the
    files together.
 
 2. Double-click LaptopGuard.exe.
 
-3. Windows will show a blue "Windows protected your PC" (SmartScreen)
+3. Windows may show a blue "Windows protected your PC" (SmartScreen)
    warning because the app is not code-signed. Click "More info" and
-   then "Run anyway". This only appears the first time.
+   then "Run anyway" if you trust this download. Managed devices may
+   prevent unsigned apps from running.
 
 4. First run: a small window shows the default settings (secret combo
    Ctrl+Shift+Z, phone number on the fake warning, alarm and clip
@@ -16,8 +18,8 @@ LAPTOP GUARD - Windows
    Every later run activates by itself after a 5-second countdown.
 
 5. Walk away. Any key press, click, or mouse movement triggers a
-   full-screen warning, a loud alarm, and a short webcam clip of the
-   intruder, and every attempt is written to guard.log.
+   warning on every attached monitor, a loud alarm, and a short webcam clip of the
+   intruder, and every attempt is written to logs/guard.jsonl.
 
 6. Press your secret combo (default Ctrl+Shift+Z) to stop everything.
    If anything ever goes wrong, Ctrl+Alt+Del -> Sign out always works.
@@ -27,7 +29,26 @@ suspicious (the guard suppresses input by design, like a keylogger
 would). The app does not send anything anywhere; it only writes files
 in this folder.
 
-Files created next to the exe: guard_config.json (your settings),
-guard.log (intrusion attempts), intruder.mp4 (webcam clip) and
-guard_debug.log (what the app did, for troubleshooting - send it along
-when reporting a problem).
+Settings: guard_config.json next to the exe. Evidence: logs/guard.jsonl
+and logs/guard_debug.log (kept indefinitely), plus three rotating clips
+in videos/ (intruder_1, intruder_2, intruder_3, MP4 or AVI).
+A local dist build shares logs/videos with its source project.
+Windows shutdown/restart events are recovered when you reopen the app;
+an abrupt power loss cannot always be recorded immediately or explained.
+
+Safe tests: click "Probar sin bloquear" during the launch countdown or
+in the automatic-controls window. Test screens (5 seconds, Esc to close),
+sound (2 seconds), or camera separately. Camera tests use temporary clips
+and never replace evidence. Input is not blocked. Automatic protection
+waits until the test panel closes, then starts a fresh 15-minute interval.
+Windows sound uses built-in winsound; pygame is not bundled or required.
+
+Automatic protection is optional: after configuring the app, reopen it
+and click "Automático (15 minutos)" during the countdown. Choose enable
+or pause. Reopen these controls after signing in to start the watcher;
+this portable ZIP does not install a Windows startup entry.
+
+Choose Customize to enter your OWN contact number and combination.
+Saving settings activates the guard. Logs and clips remain on this PC.
+This is an alarm/overlay, not a Windows secure lock. The deletion warning
+is a deterrent message: the program does not delete or encrypt files.
