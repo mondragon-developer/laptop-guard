@@ -7,6 +7,12 @@ on:
   pull_request:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing version tag to rebuild/check; blank only builds this branch'
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -35,6 +41,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -58,7 +66,7 @@ jobs:
           retention-days: 14
 
   draft:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -69,11 +77,9 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-      - name: Create draft for review
+      - name: Preserve existing release or create draft
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
-          gh release create "$TAG" --verify-tag --draft \
-            --title "Laptop Guard $TAG" --notes-file release/RELEASE-NOTES.md \
-            artifacts/*.zip artifacts/*.sha256
+          python3 tools/ensure_release.py --repo "$GITHUB_REPOSITORY" --tag "$TAG"
