@@ -5,7 +5,8 @@
 #   - macOS:   included in python.org builds; for Homebrew Python
 #              install it with:  brew install python-tk
 
-pynput>=1.7.6          # global keyboard/mouse listening + suppression
-pygame>=2.5; sys_platform != "win32"  # macOS alarm; Windows uses stdlib winsound
-numpy>=1.24            # OpenCV dependency; also generates the macOS alarm
-opencv-python>=4.8     # webcam clip on trigger (WebcamRecorder)
+# Release 1.1.0: keep tested versions across Windows and both Mac builds.
+pynput==1.8.2         # global keyboard/mouse listening + suppression
+pygame==2.6.1; sys_platform != "win32"  # macOS alarm; Windows uses stdlib winsound
+numpy==2.2.6          # OpenCV dependency; also generates the macOS alarm
+opencv-python==4.12.0.88  # webcam clip on trigger (WebcamRecorder)

@@ -257,7 +257,8 @@ class RuntimeTests(unittest.TestCase):
             for _ in range(4):
                 WebcamRecorder(GuardConfig(record_seconds=0.04), self.paths, audit).record()
         files = list(self.paths.videos.iterdir())
-        self.assertEqual(len(files), 3)
+        failures = [call.kwargs for call in audit.emit.call_args_list if call.args[0] == "video_failed"]
+        self.assertEqual(len(files), 3, failures)
         self.assertEqual(sum(c.args[0] == "video_saved" for c in audit.emit.call_args_list), 4)
         for path in files:
             clip = real_capture(str(path))
