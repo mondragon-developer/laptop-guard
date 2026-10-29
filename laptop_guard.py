@@ -64,8 +64,7 @@ def log_debug(msg: str) -> None:
 
 MESSAGE_TEMPLATE = (
     "⚠️  SYSTEM BREACH DETECTED  ⚠️\n\n"
-    "ALL FILES WILL BE PERMANENTLY DELETED IN 2 HOURS.\n\n"
-    "Call {phone} to avoid data loss.\n"
+    "Call {phone} IMMEDIATELY.\n\n"
     "Do NOT turn off the computer."
 )
 
@@ -80,8 +79,13 @@ class GuardConfig:
     message: str = ""                  # built from phone when left empty
     alarm_duration_sec: int = 90       # how long the alarm plays
     record_seconds: int = 5            # webcam clip length; 0 disables recording
+    alarm_style: str = "siren"         # classic square-wave alarm, or gentler beeps
+    flash_warning: bool = True
+    show_simulation: bool = True       # two-minute visual effect only
 
     def __post_init__(self) -> None:
+        if self.alarm_style not in ("siren", "beep"):
+            self.alarm_style = "siren"
         if not self.message:
             self.message = MESSAGE_TEMPLATE.format(phone=self.phone)
 
@@ -140,6 +144,9 @@ def load_config(path: str = CONFIG_FILE) -> GuardConfig:
                                             defaults.alarm_duration_sec)),
             record_seconds=int(data.get("record_seconds",
                                         defaults.record_seconds)),
+            alarm_style=str(data.get("alarm_style", defaults.alarm_style)),
+            flash_warning=data.get("flash_warning", defaults.flash_warning) is not False,
+            show_simulation=data.get("show_simulation", defaults.show_simulation) is not False,
         )
     except (OSError, ValueError, TypeError):
         return defaults
@@ -164,17 +171,19 @@ class AlarmPlayer(ABC):
 
 
 class PygameAlarm(AlarmPlayer):
-    """Loud square-wave alarm via pygame + numpy."""
+    """Classic alarm or alternating tones through the Mac audio backend."""
 
-    def __init__(self) -> None:
+    def __init__(self, style="siren") -> None:
         # hide pygame's "Hello from the pygame community" banner so the
         # console stays clean (must be set before the pygame import)
         os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
         import pygame  # noqa - deferred so import errors surface at use-time
         self._pygame = pygame
+        self._style = style
         self._sound = None     # MUST keep a reference (see play())
         self._fallback = None
         self._stop = threading.Event()
+        self._play_lock = threading.Lock()
         if not pygame.mixer.get_init():
             pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
 
@@ -182,21 +191,18 @@ class PygameAlarm(AlarmPlayer):
         try:
             if self._stop.is_set():
                 return
-            import numpy as np
-            sr = 44_100
-            freq = 800  # Hz - harsh alarm tone
-            t = np.linspace(0, 1.0, sr, dtype=np.float32)
-            tone = (np.sign(np.sin(2 * np.pi * freq * t)) * 16_000).astype(np.int16)
-            # stereo frames, matching the mixer's channels=2 format
-            wave = np.column_stack((tone, tone))
+            from guard_runtime.audio import pcm_tone
             # Keep the Sound in self._sound: pygame stops playback as soon
             # as the Sound object is garbage-collected, which is exactly
             # what made the alarm "sound once and stop" before.
-            self._sound = self._pygame.mixer.Sound(buffer=wave.tobytes())
-            if self._stop.is_set():
-                return
-            # loops counts REPEATS after the first play, hence the -1
-            self._sound.play(loops=max(0, duration_sec - 1))  # 1 s per loop
+            pcm = pcm_tone(self._style)
+            with self._play_lock:
+                if self._stop.is_set():
+                    return
+                self._sound = self._pygame.mixer.Sound(buffer=pcm)
+                self._sound.set_volume(1.0)
+                # loops counts REPEATS after the first play, hence the -1
+                self._sound.play(loops=max(0, duration_sec - 1))  # 1 s per loop
         except Exception as exc:
             # never leave the guard silent: degrade to the winsound beeper
             print(f"  [Guard] pygame alarm failed: {exc}", file=sys.stderr)
@@ -213,10 +219,11 @@ class PygameAlarm(AlarmPlayer):
             self._stop.set()
             if self._fallback:
                 self._fallback.stop()
-            if self._sound is not None:
-                self._sound.stop()
-                self._sound = None
-            self._pygame.mixer.stop()
+            with self._play_lock:
+                if self._sound is not None:
+                    self._sound.stop()
+                    self._sound = None
+                self._pygame.mixer.stop()
         except Exception as exc:
             print(f"  [Guard] alarm stop failed: {exc}", file=sys.stderr)
 
@@ -240,6 +247,50 @@ class WinsoundAlarm(AlarmPlayer):
         self._stop.set()
 
 
+class WindowsSirenAlarm(WinsoundAlarm):
+    """Loop the original square-wave tone with Windows' built-in WAV player."""
+
+    def __init__(self):
+        super().__init__()
+        self._play_lock = threading.Lock()
+        self._playing = False
+
+    def _stop_sound(self):
+        import winsound
+        with self._play_lock:
+            if self._playing:
+                winsound.PlaySound(None, 0)
+                self._playing = False
+
+    def play(self, duration_sec):
+        if self._stop.is_set() or duration_sec <= 0:
+            return
+        import tempfile
+        import winsound
+        from pathlib import Path
+        from guard_runtime.audio import write_alarm
+        try:
+            with tempfile.TemporaryDirectory(prefix="laptop-guard-alarm-") as folder:
+                path = Path(folder) / "alarm.wav"
+                write_alarm(path)
+                try:
+                    with self._play_lock:
+                        if self._stop.is_set():
+                            return
+                        winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
+                        self._playing = True
+                    self._stop.wait(duration_sec)
+                finally:
+                    self._stop_sound()
+        except Exception as exc:
+            log_debug(f"Classic alarm failed; using beeps: {exc}")
+            super().play(duration_sec)
+
+    def stop(self):
+        self._stop.set()
+        self._stop_sound()
+
+
 class _SilentAlarm(AlarmPlayer):
     """Last-resort fallback when neither pygame nor winsound is available."""
 
@@ -247,12 +298,12 @@ class _SilentAlarm(AlarmPlayer):
     def stop(self) -> None: ...
 
 
-def _make_alarm() -> AlarmPlayer:
+def _make_alarm(style="siren") -> AlarmPlayer:
     """Factory - Dependency Inversion: caller gets an abstraction."""
     if platform.system().lower() == "windows":
-        return WinsoundAlarm()
+        return WinsoundAlarm() if style == "beep" else WindowsSirenAlarm()
     try:
-        return PygameAlarm()
+        return PygameAlarm(style)
     except Exception as exc:
         print(f"  [Guard] pygame unavailable ({exc}); alarm disabled",
               file=sys.stderr)
@@ -274,9 +325,13 @@ class FakeScreen:
     def show(self, should_close=None, preview_seconds=None) -> None:
         """Main thread only. Preview permits Esc/click and always times out."""
         from guard_runtime.displays import enable_dpi_awareness, monitors, place
+        from guard_runtime.warning import warning_state
         shared = self._root is not None
         root = None
         windows = {}
+        labels = {}
+        started = time.monotonic()
+        previous_state = None
         poll_id = None
         failure = []
         deadline = (time.monotonic() + preview_seconds
@@ -305,10 +360,21 @@ class FakeScreen:
                         tk.Button(window, text="PRUEBA — Cerrar (Esc)",
                                   command=self.deactivate).pack(pady=20)
                         window.bind("<Escape>", lambda event: self.deactivate())
-                    tk.Label(window, text=self._config.message, fg="red", bg="black",
-                             font=("Arial", 22, "bold"),
+                    size = max(12, min(26, display.height // 30, display.width // 30))
+                    message = tk.Label(window, text=self._config.message, fg="#ff3030", bg="black",
+                             font=("Arial", size, "bold"),
                              wraplength=max(100, display.width - 80),
-                             justify="center").pack(expand=True)
+                             justify="center")
+                    message.pack(expand=True, padx=15, pady=10)
+                    timer = tk.Label(window, fg="#ff3030", bg="black", font=("Arial", size + 8, "bold"))
+                    console = tk.Label(window, fg="#ff6060", bg="black", font=("Consolas", max(10, size - 8)),
+                                       wraplength=max(100, display.width - 60), justify="left")
+                    labels[display] = (message, timer, console)
+                    if self._config.show_simulation:
+                        timer.pack(pady=10)
+                        console.pack(pady=10)
+                        tk.Label(window, text="VISUAL SIMULATION — NO FILES ARE MODIFIED", fg="#888888",
+                                 bg="black", font=("Arial", 10), wraplength=max(100, display.width - 40)).pack(pady=(0, 15))
                     window.deiconify()
                     place(window, display)
                     window.lift()
@@ -317,6 +383,19 @@ class FakeScreen:
             for display in tuple(windows):
                 if display not in attached:
                     windows.pop(display).destroy()
+                    labels.pop(display)
+
+        def animate(force=False):
+            nonlocal previous_state
+            state = warning_state(time.monotonic() - started,
+                                  flash=self._config.flash_warning,
+                                  simulation=self._config.show_simulation)
+            if force or state != previous_state:
+                for message, timer, console in labels.values():
+                    message.configure(fg=state.color)
+                    timer.configure(text=state.countdown, fg=state.color)
+                    console.configure(text=state.console)
+                previous_state = state
 
         last_scan = 0
 
@@ -331,6 +410,9 @@ class FakeScreen:
                 if now - last_scan >= 1:
                     reconcile()
                     last_scan = now
+                    animate(force=True)
+                else:
+                    animate()
             except Exception as exc:
                 failure.append(exc)
                 root.quit()
@@ -345,6 +427,7 @@ class FakeScreen:
             root = self._root if shared else tk.Tk()
             root.withdraw()
             reconcile()
+            animate(force=True)
             last_scan = time.monotonic()
             _bring_app_forward()
             poll_id = root.after(100, poll)
@@ -780,7 +863,7 @@ class LaptopGuard:
         self.config = config or GuardConfig()
         self.paths = paths or RuntimePaths()
         self._audit = audit or AuditLog(self.paths)
-        self._alarm: AlarmPlayer = alarm or _make_alarm()
+        self._alarm: AlarmPlayer = alarm or _make_alarm(self.config.alarm_style)
         self._screen = screen or FakeScreen(self.config, root)
         self._power: PowerManager = power or _make_power()
         self._recorder = recorder or WebcamRecorder(self.config, self.paths, self._audit)

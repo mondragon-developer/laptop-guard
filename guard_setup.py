@@ -58,8 +58,17 @@ class SettingsForm(tk.Frame):
         self._record = tk.Spinbox(self, from_=0, to=60, width=8)
         self._record.grid(row=3, column=1, sticky="w", **pad)
 
+        self._sound = tk.StringVar(self)
+        tk.Label(self, text="Alarm sound:").grid(row=4, column=0, sticky="w", **pad)
+        tk.OptionMenu(self, self._sound, "Classic alarm", "Beeps").grid(row=4, column=1, sticky="w", **pad)
+        self._flash = tk.BooleanVar(self)
+        tk.Checkbutton(self, text="Blink the red warning", variable=self._flash).grid(row=5, column=0, columnspan=2, sticky="w", **pad)
+        self._simulation = tk.BooleanVar(self)
+        tk.Checkbutton(self, text="2-minute countdown + simulated file activity (visual only)",
+                       variable=self._simulation).grid(row=6, column=0, columnspan=2, sticky="w", **pad)
+
         btns = tk.Frame(self)
-        btns.grid(row=4, column=0, columnspan=2, pady=8)
+        btns.grid(row=7, column=0, columnspan=2, pady=8)
         tk.Button(btns, text="Save", width=12, default="active",
                   command=self._save).pack(side="left", padx=6)
         tk.Button(btns, text="Restore defaults", width=14,
@@ -70,6 +79,9 @@ class SettingsForm(tk.Frame):
 
     def _fill(self, cfg: GuardConfig) -> None:
         """Reset every field to the given config's values."""
+        self._sound.set("Beeps" if cfg.alarm_style == "beep" else "Classic alarm")
+        self._flash.set(cfg.flash_warning)
+        self._simulation.set(cfg.show_simulation)
         for entry, value in (
             (self._phone, cfg.phone),
             (self._combo, "+".join(cfg.key_combo)),
@@ -107,6 +119,9 @@ class SettingsForm(tk.Frame):
                 "key_combo": list(combo),
                 "alarm_duration_sec": alarm,
                 "record_seconds": record,
+                "alarm_style": "beep" if self._sound.get() == "Beeps" else "siren",
+                "flash_warning": self._flash.get(),
+                "show_simulation": self._simulation.get(),
             })
         except OSError as exc:
             # never fail silently - a frozen app has no console to show
