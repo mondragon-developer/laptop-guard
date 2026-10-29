@@ -82,6 +82,7 @@ class GuardConfig:
     alarm_style: str = "siren"         # classic square-wave alarm, or gentler beeps
     flash_warning: bool = True
     show_simulation: bool = True       # two-minute visual effect only
+    matrix_background: bool = True    # bounded, low-rate digital rain
 
     def __post_init__(self) -> None:
         if self.alarm_style not in ("siren", "beep"):
@@ -147,6 +148,7 @@ def load_config(path: str = CONFIG_FILE) -> GuardConfig:
             alarm_style=str(data.get("alarm_style", defaults.alarm_style)),
             flash_warning=data.get("flash_warning", defaults.flash_warning) is not False,
             show_simulation=data.get("show_simulation", defaults.show_simulation) is not False,
+            matrix_background=data.get("matrix_background", defaults.matrix_background) is not False,
         )
     except (OSError, ValueError, TypeError):
         return defaults
@@ -326,12 +328,12 @@ class FakeScreen:
         """Main thread only. Preview permits Esc/click and always times out."""
         from guard_runtime.displays import enable_dpi_awareness, monitors, place
         from guard_runtime.warning import warning_state
+        from guard_runtime.alert_view import WarningView
         shared = self._root is not None
         root = None
         windows = {}
-        labels = {}
+        views = {}
         started = time.monotonic()
-        previous_state = None
         poll_id = None
         failure = []
         deadline = (time.monotonic() + preview_seconds
@@ -360,21 +362,9 @@ class FakeScreen:
                         tk.Button(window, text="PRUEBA — Cerrar (Esc)",
                                   command=self.deactivate).pack(pady=20)
                         window.bind("<Escape>", lambda event: self.deactivate())
-                    size = max(12, min(26, display.height // 30, display.width // 30))
-                    message = tk.Label(window, text=self._config.message, fg="#ff3030", bg="black",
-                             font=("Arial", size, "bold"),
-                             wraplength=max(100, display.width - 80),
-                             justify="center")
-                    message.pack(expand=True, padx=15, pady=10)
-                    timer = tk.Label(window, fg="#ff3030", bg="black", font=("Arial", size + 8, "bold"))
-                    console = tk.Label(window, fg="#ff6060", bg="black", font=("Consolas", max(10, size - 8)),
-                                       wraplength=max(100, display.width - 60), justify="left")
-                    labels[display] = (message, timer, console)
-                    if self._config.show_simulation:
-                        timer.pack(pady=10)
-                        console.pack(pady=10)
-                        tk.Label(window, text="VISUAL SIMULATION — NO FILES ARE MODIFIED", fg="#888888",
-                                 bg="black", font=("Arial", 10), wraplength=max(100, display.width - 40)).pack(pady=(0, 15))
+                    views[display] = WarningView(
+                        window, self._config, display.width, display.height,
+                        standard_message=self._config.message == MESSAGE_TEMPLATE.format(phone=self._config.phone))
                     window.deiconify()
                     place(window, display)
                     window.lift()
@@ -383,19 +373,14 @@ class FakeScreen:
             for display in tuple(windows):
                 if display not in attached:
                     windows.pop(display).destroy()
-                    labels.pop(display)
+                    views.pop(display)
 
-        def animate(force=False):
-            nonlocal previous_state
-            state = warning_state(time.monotonic() - started,
-                                  flash=self._config.flash_warning,
+        def animate():
+            elapsed = time.monotonic() - started
+            state = warning_state(elapsed, flash=self._config.flash_warning,
                                   simulation=self._config.show_simulation)
-            if force or state != previous_state:
-                for message, timer, console in labels.values():
-                    message.configure(fg=state.color)
-                    timer.configure(text=state.countdown, fg=state.color)
-                    console.configure(text=state.console)
-                previous_state = state
+            for view in views.values():
+                view.render(elapsed, state)
 
         last_scan = 0
 
@@ -410,9 +395,7 @@ class FakeScreen:
                 if now - last_scan >= 1:
                     reconcile()
                     last_scan = now
-                    animate(force=True)
-                else:
-                    animate()
+                animate()
             except Exception as exc:
                 failure.append(exc)
                 root.quit()
@@ -427,7 +410,7 @@ class FakeScreen:
             root = self._root if shared else tk.Tk()
             root.withdraw()
             reconcile()
-            animate(force=True)
+            animate()
             last_scan = time.monotonic()
             _bring_app_forward()
             poll_id = root.after(100, poll)

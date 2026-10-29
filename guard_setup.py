@@ -66,9 +66,12 @@ class SettingsForm(tk.Frame):
         self._simulation = tk.BooleanVar(self)
         tk.Checkbutton(self, text="2-minute countdown + simulated file activity (visual only)",
                        variable=self._simulation).grid(row=6, column=0, columnspan=2, sticky="w", **pad)
+        self._matrix = tk.BooleanVar(self)
+        tk.Checkbutton(self, text="Matrix-style animated background", variable=self._matrix).grid(
+            row=7, column=0, columnspan=2, sticky="w", **pad)
 
         btns = tk.Frame(self)
-        btns.grid(row=7, column=0, columnspan=2, pady=8)
+        btns.grid(row=8, column=0, columnspan=2, pady=8)
         tk.Button(btns, text="Save", width=12, default="active",
                   command=self._save).pack(side="left", padx=6)
         tk.Button(btns, text="Restore defaults", width=14,
@@ -82,6 +85,7 @@ class SettingsForm(tk.Frame):
         self._sound.set("Beeps" if cfg.alarm_style == "beep" else "Classic alarm")
         self._flash.set(cfg.flash_warning)
         self._simulation.set(cfg.show_simulation)
+        self._matrix.set(cfg.matrix_background)
         for entry, value in (
             (self._phone, cfg.phone),
             (self._combo, "+".join(cfg.key_combo)),
@@ -122,6 +126,7 @@ class SettingsForm(tk.Frame):
                 "alarm_style": "beep" if self._sound.get() == "Beeps" else "siren",
                 "flash_warning": self._flash.get(),
                 "show_simulation": self._simulation.get(),
+                "matrix_background": self._matrix.get(),
             })
         except OSError as exc:
             # never fail silently - a frozen app has no console to show

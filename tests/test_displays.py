@@ -33,7 +33,7 @@ class ScreenTests(unittest.TestCase):
         root.mainloop.side_effect = loop
         scan = Mock(side_effect=layouts)
         with patch("laptop_guard.tk.Toplevel", side_effect=window), \
-             patch("laptop_guard.tk.Label"), patch("laptop_guard.tk.Button") as button, \
+             patch("guard_runtime.alert_view.WarningView"), patch("laptop_guard.tk.Button") as button, \
              patch("laptop_guard.time.monotonic", side_effect=lambda: clock[0]), \
              patch("guard_runtime.displays.monitors", scan), \
              patch("guard_runtime.displays.place", side_effect=failure) as place, \

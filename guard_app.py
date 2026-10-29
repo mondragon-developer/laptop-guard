@@ -430,6 +430,7 @@ def main() -> None:
                 "alarm_style": defaults.alarm_style,
                 "flash_warning": defaults.flash_warning,
                 "show_simulation": defaults.show_simulation,
+                "matrix_background": defaults.matrix_background,
             })
             _activate()
 
