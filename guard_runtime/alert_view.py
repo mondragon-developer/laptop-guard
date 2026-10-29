@@ -54,7 +54,7 @@ class WarningView:
         self.rain = MatrixRain(self.canvas) if config.matrix_background else None
         self.background_code = self.canvas.create_text(
             20, 20, anchor="nw", fill="#165331", font=("Consolas", -12),
-            text='// VISUAL SIMULATION\nevent = {"type": "unauthorized_input"}\n'
+            text='// ACTIVITY MONITOR\nevent = {"type": "unauthorized_input"}\n'
                  'if event["type"] == "unauthorized_input":\n    alert_owner()')
         self.card = self.canvas.create_rectangle(0, 0, 1, 1, fill="#080c0a", outline="#742428", width=2)
         self.badge = self.canvas.create_text(0, 0, text="SECURITY ALERT  /  LAPTOP GUARD", fill="#ad7478",
@@ -68,7 +68,7 @@ class WarningView:
                                               fill="#c59494", font=("Arial", -14), justify="center")
         self.timer = self.canvas.create_text(0, 0, fill="#ff3030", justify="center")
         self.console = self.canvas.create_text(0, 0, fill="#719781", justify="left")
-        self.footer = self.canvas.create_text(0, 0, text="VISUAL SIMULATION — NO FILES ARE MODIFIED",
+        self.footer = self.canvas.create_text(0, 0, text="NO FILES ARE MODIFIED",
                                               fill="#74817a", font=("Arial", -11), justify="center")
         if not config.matrix_background:
             self.canvas.itemconfigure(self.background_code, state="hidden")

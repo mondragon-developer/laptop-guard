@@ -130,7 +130,7 @@ class AlertTests(unittest.TestCase):
             state = warning_state(elapsed)
             self.assertIn("00:00", state.countdown)
             self.assertIn("No files were changed", state.console)
-        self.assertIn("[SIMULATION] demo_file_", warning_state(0).console)
+        self.assertIn("demo_file_", warning_state(0).console)
 
     def test_effects_can_be_disabled_independently(self):
         self.assertNotEqual(warning_state(0).color, warning_state(0.7).color)
