@@ -427,6 +427,9 @@ def main() -> None:
                 "key_combo": list(defaults.key_combo),
                 "alarm_duration_sec": defaults.alarm_duration_sec,
                 "record_seconds": defaults.record_seconds,
+                "alarm_style": defaults.alarm_style,
+                "flash_warning": defaults.flash_warning,
+                "show_simulation": defaults.show_simulation,
             })
             _activate()
 

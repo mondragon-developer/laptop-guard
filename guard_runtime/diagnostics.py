@@ -84,7 +84,7 @@ def show(root, config, paths=None):
             set_busy(False)
 
     def sound():
-        alarm = _make_alarm()
+        alarm = _make_alarm(config.alarm_style)
         register(alarm)
         try:
             alarm.play(2)

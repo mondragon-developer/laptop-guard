@@ -6,5 +6,8 @@
     "z"
   ],
   "alarm_duration_sec": 90,
-  "record_seconds": 5
+  "record_seconds": 5,
+  "alarm_style": "siren",
+  "flash_warning": true,
+  "show_simulation": true
 }

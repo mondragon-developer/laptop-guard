@@ -22,6 +22,12 @@ Puede existir un archivo `*.pending.*` durante la grabación. Un corte de energ�
 
 ## Apagados y reinicios
 
+La alarma necesita que el computador esté encendido y la aplicación en ejecución. Apagar, reiniciar o cerrar sesión termina ese proceso; no conserva una alarma sonando ni la cuenta regresiva entre arranques. Un acceso directo `LaptopGuard.exe --watch` en Inicio de Windows vuelve a abrir el vigilante **después de iniciar sesión**, si el acceso está habilitado. Con el modo automático activado, empieza un intervalo nuevo de 15 minutos; no se activa inmediatamente al encender. Los ZIP portátiles no instalan ese acceso por sí solos.
+
+`Win + L` cambia al escritorio seguro de Windows. La aplicación no captura entradas ni muestra su aviso sobre esa pantalla. El vigilante automático espera mientras está bloqueada y reinicia su intervalo al desbloquear. Si una alarma ya estaba sonando, el proceso puede seguir reproduciéndola hasta su duración configurada mientras la sesión permanece activa; bloquear no garantiza silenciarla ni permite detectar toques sobre el escritorio seguro. La suspensión pausa la ejecución; no hay vigilancia mientras el equipo duerme. El bloqueo de Windows sigue siendo la protección del sistema.
+
+Referencias: [inicio de aplicaciones al iniciar sesión](https://support.microsoft.com/en-us/windows/experience/startup-boot/configure-startup-applications-in-windows), [escritorios y escritorio seguro de Windows](https://learn.microsoft.com/en-us/windows/win32/winstation/desktops).
+
 En Windows, la aplicación consulta el registro de eventos del sistema mientras está activa y recupera lo disponible al volver a ejecutarse. Distingue solicitudes de apagado/reinicio, inicio y cierre del sistema, interrupciones, suspensión y reanudación. Conserva la hora del evento original y la hora en que lo importó.
 
 La recuperación depende de que Windows conserve sus eventos. Un corte de energía o cierre forzado puede impedir la última escritura. Una sesión inconclusa se informa como interrupción de causa desconocida; no demuestra quién tocó el equipo. Los eventos entre sesiones tampoco se atribuyen automáticamente a otra persona.
@@ -29,6 +35,14 @@ La recuperación depende de que Windows conserve sus eventos. Un corte de energ�
 macOS no utiliza esta recuperación del registro de Windows. Sí detecta una sesión anterior que quedó abierta en sus propios archivos de estado.
 
 ## Pruebas y soporte
+
+### Sonido y efectos visuales (código actual; posteriores a los ZIP v1.1.0)
+
+Settings permite elegir **Classic alarm** (onda cuadrada de 800 Hz, como la alarma original) o **Beeps**. En Windows ambos usan audio del sistema, sin agregar bibliotecas. El volumen depende de los altavoces y el mezclador de Windows; la aplicación no cambia el volumen general ni desactiva el silencio. Usa **Probar sonido** para comparar con seguridad.
+
+**Blink the red warning** alterna dos tonos de rojo cada 650 ms. **2-minute countdown + simulated file activity** muestra una cuenta de 02:00 a 00:00 y nombres ficticios; no enumera, modifica, cifra ni borra archivos. Al llegar a cero, el aviso permanece hasta desactivar la protección y confirma que los archivos no se cambiaron. Los dos efectos pueden deshabilitarse de forma independiente. La duración del sonido es una opción separada del contador visual.
+
+Las configuraciones anteriores conservan contacto, combinación y duraciones; los campos nuevos usan alarma clásica y efectos activados de forma predeterminada. El botón de guardar sigue activando la protección en el lanzador.
 
 **Probar sin bloquear** reserva la instancia mientras el panel está abierto. Al cerrarlo, el vigilante automático de Windows empieza un intervalo nuevo de 15 minutos. Las pruebas de cámara usan una carpeta temporal que no reemplaza los clips reales.
 
