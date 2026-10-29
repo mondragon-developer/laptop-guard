@@ -9,5 +9,6 @@
   "record_seconds": 5,
   "alarm_style": "siren",
   "flash_warning": true,
-  "show_simulation": true
+  "show_simulation": true,
+  "matrix_background": true
 }

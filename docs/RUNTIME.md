@@ -44,6 +44,8 @@ Settings permite elegir **Classic alarm** (onda cuadrada de 800 Hz, como la alar
 
 Las configuraciones anteriores conservan contacto, combinación y duraciones; los campos nuevos usan alarma clásica y efectos activados de forma predeterminada. El botón de guardar sigue activando la protección en el lanzador.
 
+**Matrix-style animated background** añade lluvia de caracteres verdes detrás de un panel oscuro. El aviso y el teléfono titilan en rojo; el texto pide llamar al propietario para resolver la alerta y no revela la combinación. El fondo puede desactivarse por separado. Toda la consola es texto ilustrativo: no se ejecutan los fragmentos mostrados ni se leen archivos personales. La animación usa Tkinter, sin nuevas dependencias, con hasta 32 columnas (96 objetos reutilizados) por pantalla, movimiento a 10 actualizaciones por segundo y caracteres renovados dos veces por segundo. Las ventanas nuevas comparten el contador y la animación existentes; cerrar la alerta cancela el único temporizador de actualización.
+
 **Probar sin bloquear** reserva la instancia mientras el panel está abierto. Al cerrarlo, el vigilante automático de Windows empieza un intervalo nuevo de 15 minutos. Las pruebas de cámara usan una carpeta temporal que no reemplaza los clips reales.
 
 `--check` comprueba importaciones, versión y rutas sin activar protección. `--check-output RUTA` escribe el resultado como JSON, incluso desde el ejecutable sin consola.
